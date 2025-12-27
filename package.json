@@ -1,0 +1,30 @@
+{
+  "name": "planneer",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '*' dev",
+    "dev:backend": "cd packages/backend && bun dev",
+    "dev:frontend": "cd packages/frontend && bun dev",
+    "build": "bun run --filter '*' build",
+    "test": "bun run --filter '*' test",
+    "test:backend": "bun run --filter @planneer/backend test",
+    "test:frontend": "bun run --filter @planneer/frontend test",
+    "lint": "bun run --filter '*' lint",
+    "db:generate": "cd packages/backend && bun db:generate",
+    "db:migrate": "cd packages/backend && bun db:migrate",
+    "db:push": "cd packages/backend && bun db:push",
+    "db:studio": "cd packages/backend && bun db:studio",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "overrides": {
+    "jose": "5.9.6"
+  }
+}

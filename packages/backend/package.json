@@ -1,0 +1,42 @@
+{
+  "name": "@planneer/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun run dist/index.js",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@planneer/shared": "workspace:*",
+    "@sinclair/typebox": "0.33.17",
+    "elysia": "1.1.12",
+    "@elysiajs/cors": "1.1.0",
+    "@elysiajs/swagger": "1.1.1",
+    "better-auth": "^1.0.0",
+    "drizzle-orm": "^0.38.0",
+    "postgres": "^3.4.4",
+    "@aws-sdk/client-s3": "^3.500.0",
+    "@aws-sdk/s3-request-presigner": "^3.500.0",
+    "openai": "^4.28.0",
+    "@anthropic-ai/sdk": "^0.17.0",
+    "xer-parser": "^1.0.0",
+    "fast-xml-parser": "^4.3.4",
+    "zod": "^3.22.4",
+    "nanoid": "^5.0.5"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.3.3",
+    "drizzle-kit": "^0.30.0"
+  }
+}

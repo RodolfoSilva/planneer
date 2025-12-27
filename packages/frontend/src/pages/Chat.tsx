@@ -1,0 +1,373 @@
+import { useState, useRef, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useParams, useNavigate } from "@tanstack/react-router";
+import { Send, Sparkles, Calendar, ArrowRight, Loader2 } from "lucide-react";
+import { chat } from "@/lib/api";
+import { ChatMessage, TypingIndicator } from "@/components/ChatMessage";
+import { cn } from "@/lib/utils";
+import { PROJECT_TYPE_LABELS } from "@planneer/shared";
+import { useOrganization } from "@/hooks/useOrganization";
+
+const projectTypes = Object.entries(PROJECT_TYPE_LABELS).map(
+  ([value, label]) => ({
+    value,
+    label,
+  })
+);
+
+export function Chat() {
+  const { sessionId } = useParams({ strict: false });
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { currentOrganization, isLoading: isOrgLoading } = useOrganization();
+
+  // Debug: log organization state
+  console.log(
+    "[Chat] Organization:",
+    currentOrganization,
+    "Loading:",
+    isOrgLoading
+  );
+
+  const [input, setInput] = useState("");
+  const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [projectDescription, setProjectDescription] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Fetch session if we have an ID
+  const sessionQuery = useQuery({
+    queryKey: ["chat-session", sessionId],
+    queryFn: () => chat.getSession(sessionId!),
+    enabled: !!sessionId,
+  });
+
+  // Start session mutation
+  const startSessionMutation = useMutation({
+    mutationFn: (data: {
+      organizationId: string;
+      projectType: string;
+      projectDescription: string;
+    }) => chat.startSession(data),
+    onSuccess: (data) => {
+      navigate({ to: `/chat/${data.data.id}` });
+    },
+    onError: (err: Error) => {
+      setError(err.message || "Erro ao iniciar conversa");
+    },
+  });
+
+  // Send message mutation
+  const sendMessageMutation = useMutation({
+    mutationFn: (content: string) => chat.sendMessage(sessionId!, content),
+    onMutate: () => {
+      setIsTyping(true);
+      setError(null);
+    },
+    onSuccess: (data) => {
+      setIsTyping(false);
+      queryClient.invalidateQueries({ queryKey: ["chat-session", sessionId] });
+
+      // If schedule was generated, show it
+      if (data.data.generatedScheduleId) {
+        navigate({ to: `/schedules/${data.data.generatedScheduleId}` });
+      }
+    },
+    onError: (err: Error) => {
+      setIsTyping(false);
+      setError(err.message || "Erro ao enviar mensagem. Tente novamente.");
+      console.error("[Chat] Error sending message:", err);
+    },
+  });
+
+  const messages = sessionQuery.data?.data?.messages || [];
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isTyping]);
+
+  // Focus input
+  useEffect(() => {
+    if (sessionId) {
+      inputRef.current?.focus();
+    }
+  }, [sessionId]);
+
+  const handleStartChat = () => {
+    setError(null);
+
+    console.log("[Chat] handleStartChat called");
+    console.log("[Chat] currentOrganization:", currentOrganization);
+    console.log("[Chat] selectedType:", selectedType);
+    console.log("[Chat] projectDescription:", projectDescription);
+
+    if (!currentOrganization?.id) {
+      setError("Organização não encontrada. Recarregue a página.");
+      console.error("[Chat] No organization ID!");
+      return;
+    }
+
+    if (!selectedType) {
+      setError("Selecione um tipo de projeto");
+      return;
+    }
+
+    if (!projectDescription.trim() || projectDescription.trim().length < 10) {
+      setError("Descreva seu projeto (mínimo 10 caracteres)");
+      return;
+    }
+
+    const payload = {
+      organizationId: currentOrganization.id,
+      projectType: selectedType,
+      projectDescription: projectDescription.trim(),
+    };
+
+    console.log("[Chat] Sending payload:", payload);
+    startSessionMutation.mutate(payload);
+  };
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!input.trim() || !sessionId || sendMessageMutation.isPending) return;
+
+    sendMessageMutation.mutate(input.trim());
+    setInput("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage(e);
+    }
+  };
+
+  // Initial screen - no session
+  if (!sessionId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full">
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 bg-gradient-to-br from-primary-500 to-accent-500 rounded-2xl flex items-center justify-center mx-auto mb-6">
+              <Sparkles className="w-10 h-10 text-white" />
+            </div>
+
+            <h1 className="text-3xl font-display font-bold text-slate-900 mb-3">
+              Criar Novo Cronograma
+            </h1>
+            <p className="text-lg text-slate-600">
+              Selecione o tipo de projeto e descreva seu projeto. A IA vai
+              ajudá-lo a criar um cronograma completo.
+            </p>
+          </div>
+
+          {/* Loading organization */}
+          {isOrgLoading && (
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-sm flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Carregando organização...
+            </div>
+          )}
+
+          {/* Organization info */}
+          {currentOrganization && (
+            <div className="mb-6 p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600">
+              Organização: <strong>{currentOrganization.name}</strong>
+            </div>
+          )}
+
+          {/* Error message */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
+              {error}
+            </div>
+          )}
+
+          {/* Project Type Selection */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-slate-700 mb-3">
+              1. Tipo de Projeto
+            </label>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {projectTypes.map((type) => (
+                <button
+                  key={type.value}
+                  onClick={() => setSelectedType(type.value)}
+                  className={cn(
+                    "p-4 rounded-xl border-2 text-left transition-all",
+                    selectedType === type.value
+                      ? "border-primary-500 bg-primary-50"
+                      : "border-slate-200 hover:border-slate-300 bg-white"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "text-sm font-medium",
+                      selectedType === type.value
+                        ? "text-primary-700"
+                        : "text-slate-700"
+                    )}
+                  >
+                    {type.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Project Description */}
+          <div className="mb-8">
+            <label className="block text-sm font-medium text-slate-700 mb-3">
+              2. Descrição do Projeto
+            </label>
+            <textarea
+              value={projectDescription}
+              onChange={(e) => setProjectDescription(e.target.value)}
+              placeholder="Descreva brevemente seu projeto... Ex: Construção de um edifício residencial de 10 andares com 4 apartamentos por andar."
+              className="input min-h-[120px] resize-none"
+              rows={4}
+            />
+            <p className="text-xs text-slate-500 mt-2">
+              Mínimo 10 caracteres. Quanto mais detalhes, melhor será o
+              cronograma gerado.
+            </p>
+          </div>
+
+          <div className="text-center">
+            <button
+              onClick={handleStartChat}
+              disabled={
+                startSessionMutation.isPending ||
+                isOrgLoading ||
+                !currentOrganization
+              }
+              className="btn-primary text-lg px-8 py-3"
+            >
+              {startSessionMutation.isPending || isOrgLoading ? (
+                <Loader2 className="w-5 h-5 animate-spin mr-2" />
+              ) : (
+                <Sparkles className="w-5 h-5 mr-2" />
+              )}
+              {isOrgLoading ? "Carregando..." : "Iniciar Conversa com IA"}
+            </button>
+
+            {!isOrgLoading && !currentOrganization && (
+              <p className="mt-4 text-sm text-red-600">
+                Organização não encontrada. Por favor, recarregue a página.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Chat interface
+  return (
+    <div className="flex flex-col h-screen lg:h-[calc(100vh-0px)]">
+      {/* Header */}
+      <div className="flex-shrink-0 p-4 border-b border-slate-200 bg-white">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-accent-500 rounded-xl flex items-center justify-center">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="font-semibold text-slate-900">
+              Assistente de Planejamento
+            </h1>
+            <p className="text-sm text-slate-500">
+              Criando seu cronograma com IA
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {sessionQuery.isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
+          </div>
+        ) : (
+          <>
+            {messages.map((message: any) => (
+              <ChatMessage
+                key={message.id}
+                role={message.role}
+                content={message.content}
+                timestamp={message.createdAt}
+              />
+            ))}
+
+            {isTyping && <TypingIndicator />}
+
+            <div ref={messagesEndRef} />
+          </>
+        )}
+      </div>
+
+      {/* Input */}
+      <div className="flex-shrink-0 p-4 border-t border-slate-200 bg-white">
+        {error && (
+          <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            {error}
+          </div>
+        )}
+        <form onSubmit={handleSendMessage} className="flex gap-3">
+          <div className="flex-1 relative">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Descreva seu projeto ou responda às perguntas..."
+              className="input resize-none pr-12"
+              rows={1}
+              disabled={
+                sendMessageMutation.isPending ||
+                sessionQuery.data?.data?.status !== "active"
+              }
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!input.trim() || sendMessageMutation.isPending}
+            className="btn-primary"
+          >
+            {sendMessageMutation.isPending ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <Send className="w-5 h-5" />
+            )}
+          </button>
+        </form>
+
+        {sessionQuery.data?.data?.status === "completed" && (
+          <div className="mt-3 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
+            <p className="text-sm text-emerald-700 flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
+              Cronograma gerado com sucesso!
+              {sessionQuery.data.data.scheduleId && (
+                <button
+                  onClick={() =>
+                    navigate({
+                      to: `/schedules/${sessionQuery.data.data.scheduleId}`,
+                    })
+                  }
+                  className="ml-auto text-emerald-600 font-medium hover:text-emerald-700 flex items-center gap-1"
+                >
+                  Ver cronograma <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

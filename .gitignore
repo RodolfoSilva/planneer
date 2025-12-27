@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+*.tgz
+.cache/
+.temp/
+.tmp/
+
+# Bun
+bun.lockb
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# Docker volumes (local)
+.docker-data/
+
+# Uploaded files (local)
+uploads/
+
+
+
