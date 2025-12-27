@@ -11,11 +11,15 @@ import {
 } from 'lucide-react';
 import { projects, schedules, templates } from '@/lib/api';
 import { formatRelativeTime } from '@/lib/utils';
+import { useOrganization } from '@/hooks/useOrganization';
 
 export function Dashboard() {
+  const { currentOrganization, isLoading: isOrgLoading } = useOrganization();
+  
   const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => projects.list(),
+    queryKey: ['projects', currentOrganization?.id],
+    queryFn: () => projects.list(currentOrganization?.id),
+    enabled: !!currentOrganization && !isOrgLoading,
   });
   
   const schedulesQuery = useQuery({
@@ -28,8 +32,8 @@ export function Dashboard() {
     queryFn: () => templates.list(),
   });
   
-  const recentProjects = projectsQuery.data?.data.items.slice(0, 5) || [];
-  const recentSchedules = schedulesQuery.data?.data.items.slice(0, 5) || [];
+  const recentProjects = projectsQuery.data?.data?.items?.slice(0, 5) || [];
+  const recentSchedules = schedulesQuery.data?.data?.items?.slice(0, 5) || [];
   
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
@@ -74,7 +78,7 @@ export function Dashboard() {
               Projetos
             </h3>
             <p className="text-sm text-slate-500 mt-1">
-              {projectsQuery.data?.data.total || 0} projetos
+              {projectsQuery.data?.data?.total || 0} projetos
             </p>
           </div>
         </Link>

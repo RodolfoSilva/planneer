@@ -30,36 +30,67 @@ async function getAuthUser(request: Request) {
 }
 
 export const projectRoutes = new Elysia({ prefix: "/api/projects" })
-  .get("/", async ({ request }) => {
-    const user = await getAuthUser(request);
-    const userOrgs = await getUserOrganizations(user.id);
-    const orgIds = userOrgs.map((o) => o.organizationId);
+  .get(
+    "/",
+    async ({ query, request }) => {
+      const user = await getAuthUser(request);
+      const userOrgs = await getUserOrganizations(user.id);
+      const orgIds = userOrgs.map((o) => o.organizationId);
 
-    if (orgIds.length === 0) {
-      return { success: true, data: { items: [], total: 0 } };
-    }
+      console.log("[Projects API] User ID:", user.id);
+      console.log("[Projects API] User organizations:", userOrgs);
+      console.log("[Projects API] Organization IDs:", orgIds);
+      console.log("[Projects API] Query organizationId:", query.organizationId);
 
-    const result = await db.query.projects.findMany({
-      where: (projects, { inArray }) =>
-        inArray(projects.organizationId, orgIds),
-      orderBy: [desc(projects.updatedAt)],
-      with: {
-        organization: true,
-        schedules: {
-          limit: 1,
-          orderBy: (schedules, { desc }) => [desc(schedules.updatedAt)],
+      if (orgIds.length === 0) {
+        console.log("[Projects API] No organizations found for user");
+        return { success: true, data: { items: [], total: 0 } };
+      }
+
+      // If organizationId is provided in query, filter by it (but verify user has access)
+      let filterOrgIds = orgIds;
+      if (query.organizationId) {
+        if (!orgIds.includes(query.organizationId)) {
+          throw new ForbiddenError(
+            "You do not have access to this organization"
+          );
+        }
+        filterOrgIds = [query.organizationId];
+      }
+
+      const result = await db.query.projects.findMany({
+        where: (projects, { inArray }) =>
+          inArray(projects.organizationId, filterOrgIds),
+        orderBy: [desc(projects.updatedAt)],
+        with: {
+          organization: true,
+          schedules: {
+            limit: 1,
+            orderBy: (schedules, { desc }) => [desc(schedules.updatedAt)],
+          },
         },
-      },
-    });
+      });
 
-    return {
-      success: true,
-      data: {
-        items: result,
-        total: result.length,
-      },
-    };
-  })
+      console.log("[Projects API] Found projects:", result.length);
+      console.log(
+        "[Projects API] Projects:",
+        result.map((p) => ({ id: p.id, name: p.name, orgId: p.organizationId }))
+      );
+
+      return {
+        success: true,
+        data: {
+          items: result,
+          total: result.length,
+        },
+      };
+    },
+    {
+      query: t.Object({
+        organizationId: t.Optional(t.String()),
+      }),
+    }
+  )
   .get(
     "/:id",
     async ({ params, request }) => {

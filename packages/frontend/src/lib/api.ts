@@ -79,8 +79,10 @@ export const auth = {
 
 // Projects
 export const projects = {
-  list: () =>
-    apiRequest<{ success: boolean; data: { items: any[]; total: number } }>('/api/projects'),
+  list: (organizationId?: string) =>
+    apiRequest<{ success: boolean; data: { items: any[]; total: number } }>(
+      `/api/projects${organizationId ? `?organizationId=${organizationId}` : ''}`
+    ),
   
   get: (id: string) =>
     apiRequest<{ success: boolean; data: any }>(`/api/projects/${id}`),

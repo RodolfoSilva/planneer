@@ -5,16 +5,20 @@ import { projects } from '@/lib/api';
 import { formatRelativeTime, cn } from '@/lib/utils';
 import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '@planneer/shared';
 import { useState } from 'react';
+import { useOrganization } from '@/hooks/useOrganization';
 
 export function Projects() {
   const [search, setSearch] = useState('');
+  const { currentOrganization, isLoading: isOrgLoading } = useOrganization();
   
   const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: () => projects.list(),
+    queryKey: ['projects', currentOrganization?.id],
+    queryFn: () => projects.list(currentOrganization?.id),
+    enabled: !!currentOrganization && !isOrgLoading,
+    staleTime: 0, // Always refetch when organization changes
   });
   
-  const projectList = projectsQuery.data?.data.items || [];
+  const projectList = projectsQuery.data?.data?.items || [];
   
   const filteredProjects = projectList.filter((project: any) =>
     project.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -54,7 +58,16 @@ export function Projects() {
       </div>
       
       {/* Projects Grid */}
-      {projectsQuery.isLoading ? (
+      {isOrgLoading || !currentOrganization ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="card p-6 animate-pulse">
+              <div className="h-5 bg-slate-200 rounded w-3/4 mb-3" />
+              <div className="h-4 bg-slate-200 rounded w-1/2" />
+            </div>
+          ))}
+        </div>
+      ) : projectsQuery.isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
             <div key={i} className="card p-6 animate-pulse">
@@ -117,6 +130,22 @@ export function Projects() {
               </div>
             </Link>
           ))}
+        </div>
+      ) : projectsQuery.isError ? (
+        <div className="card p-12 text-center">
+          <FolderKanban className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-slate-900 mb-2">
+            Erro ao carregar projetos
+          </h3>
+          <p className="text-slate-500 mb-6">
+            {projectsQuery.error?.message || 'Ocorreu um erro ao buscar os projetos'}
+          </p>
+          <button 
+            onClick={() => projectsQuery.refetch()} 
+            className="btn-primary"
+          >
+            Tentar novamente
+          </button>
         </div>
       ) : (
         <div className="card p-12 text-center">

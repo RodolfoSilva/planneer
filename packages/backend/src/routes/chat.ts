@@ -89,6 +89,13 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
         throw new ForbiddenError("You do not have access to this chat session");
       }
 
+      // Check and process any pending messages in the background
+      // This ensures that if the server restarted while processing a message,
+      // the message will be processed when the session is loaded
+      chatService.processPendingMessage(params.sessionId).catch((error) => {
+        console.error("[ChatRoutes] Error processing pending message:", error);
+      });
+
       return { success: true, data: session };
     },
     {

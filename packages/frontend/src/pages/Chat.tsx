@@ -34,6 +34,9 @@ export function Chat() {
   const [projectDescription, setProjectDescription] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [optimisticMessages, setOptimisticMessages] = useState<
+    Array<{ id: string; role: "user"; content: string; createdAt: string }>
+  >([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -43,6 +46,20 @@ export function Chat() {
     queryKey: ["chat-session", sessionId],
     queryFn: () => chat.getSession(sessionId!),
     enabled: !!sessionId,
+    refetchInterval: (query) => {
+      // If there's a pending user message (last message is from user),
+      // refetch more frequently to get the assistant response
+      const messages = query.state.data?.data?.messages || [];
+      if (messages.length > 0) {
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage.role === "user") {
+          // Refetch every 2 seconds if there's a pending message
+          return 2000;
+        }
+      }
+      // Otherwise, don't auto-refetch
+      return false;
+    },
   });
 
   // Start session mutation
@@ -53,9 +70,13 @@ export function Chat() {
       projectDescription: string;
     }) => chat.startSession(data),
     onSuccess: (data) => {
+      // Invalidate projects query to refresh the list
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      console.log("[Chat] Session started, projectId:", data.data.projectId);
       navigate({ to: `/chat/${data.data.id}` });
     },
     onError: (err: Error) => {
+      console.error("[Chat] Error starting session:", err);
       setError(err.message || "Erro ao iniciar conversa");
     },
   });
@@ -63,12 +84,23 @@ export function Chat() {
   // Send message mutation
   const sendMessageMutation = useMutation({
     mutationFn: (content: string) => chat.sendMessage(sessionId!, content),
-    onMutate: () => {
+    onMutate: (content: string) => {
       setIsTyping(true);
       setError(null);
+
+      // Add optimistic message immediately
+      const optimisticMessage = {
+        id: `temp-${Date.now()}`,
+        role: "user" as const,
+        content: content,
+        createdAt: new Date().toISOString(),
+      };
+      setOptimisticMessages((prev) => [...prev, optimisticMessage]);
     },
     onSuccess: (data) => {
       setIsTyping(false);
+      // Clear optimistic messages as server will return the real ones
+      setOptimisticMessages([]);
       queryClient.invalidateQueries({ queryKey: ["chat-session", sessionId] });
 
       // If schedule was generated, show it
@@ -78,12 +110,36 @@ export function Chat() {
     },
     onError: (err: Error) => {
       setIsTyping(false);
+      // Remove the failed optimistic message
+      setOptimisticMessages([]);
       setError(err.message || "Erro ao enviar mensagem. Tente novamente.");
       console.error("[Chat] Error sending message:", err);
     },
   });
 
-  const messages = sessionQuery.data?.data?.messages || [];
+  const serverMessages = sessionQuery.data?.data?.messages || [];
+
+  // Combine server messages with optimistic messages
+  // Optimistic messages are temporary and will be replaced by server response
+  const messages = [...serverMessages, ...optimisticMessages];
+
+  // Clear optimistic messages when server messages are updated
+  // This prevents duplicates if the query refetches quickly
+  useEffect(() => {
+    if (serverMessages.length > 0 && optimisticMessages.length > 0) {
+      // Check if the last server message matches any optimistic message
+      const lastServerMessage = serverMessages[serverMessages.length - 1];
+      const hasMatchingMessage = optimisticMessages.some(
+        (optMsg) =>
+          optMsg.content === lastServerMessage.content &&
+          lastServerMessage.role === "user"
+      );
+
+      if (hasMatchingMessage) {
+        setOptimisticMessages([]);
+      }
+    }
+  }, [serverMessages, optimisticMessages]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -352,11 +408,11 @@ export function Chat() {
             <p className="text-sm text-emerald-700 flex items-center gap-2">
               <Calendar className="w-4 h-4" />
               Cronograma gerado com sucesso!
-              {sessionQuery.data.data.scheduleId && (
+              {sessionQuery.data?.data?.scheduleId && (
                 <button
                   onClick={() =>
                     navigate({
-                      to: `/schedules/${sessionQuery.data.data.scheduleId}`,
+                      to: `/schedules/${sessionQuery.data?.data?.scheduleId}`,
                     })
                   }
                   className="ml-auto text-emerald-600 font-medium hover:text-emerald-700 flex items-center gap-1"

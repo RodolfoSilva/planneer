@@ -7,6 +7,7 @@ import {
   schedules,
   activities,
   wbs,
+  projects,
   type ChatSessionContext,
 } from "../../db/schema";
 import { LLMService } from "../ai/llm";
@@ -36,15 +37,193 @@ export class ChatService {
   }
 
   /**
+   * Check if there's a pending user message that needs to be processed
+   * Returns the last user message if it hasn't been responded to
+   */
+  async checkPendingMessage(sessionId: string): Promise<{ id: string; content: string } | null> {
+    const session = await db.query.chatSessions.findFirst({
+      where: eq(chatSessions.id, sessionId),
+      with: {
+        messages: {
+          orderBy: (messages, { desc }) => [desc(messages.createdAt)],
+        },
+      },
+    });
+
+    if (!session || session.status !== "active") {
+      return null;
+    }
+
+    // If there are no messages, nothing to process
+    if (!session.messages || session.messages.length === 0) {
+      return null;
+    }
+
+    // Get the last message
+    const lastMessage = session.messages[0];
+
+    // If the last message is from the user, it needs to be processed
+    if (lastMessage.role === "user") {
+      return {
+        id: lastMessage.id,
+        content: lastMessage.content,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Process an existing user message that hasn't been responded to
+   * This is used when recovering from server restarts
+   */
+  async processExistingMessage(sessionId: string, userMessageId: string, userMessageContent: string): Promise<void> {
+    console.log("[ChatService] Processing existing message:", userMessageId);
+
+    const session = await db.query.chatSessions.findFirst({
+      where: eq(chatSessions.id, sessionId),
+      with: {
+        messages: {
+          orderBy: (messages, { asc }) => [asc(messages.createdAt)],
+        },
+      },
+    });
+
+    if (!session) {
+      console.error("[ChatService] Session not found:", sessionId);
+      throw new Error("Session not found");
+    }
+
+    // Check if this message already has a response
+    const messageIndex = session.messages.findIndex(m => m.id === userMessageId);
+    if (messageIndex === -1) {
+      console.error("[ChatService] Message not found:", userMessageId);
+      return;
+    }
+
+    // Check if there's already a response after this message
+    const messagesAfter = session.messages.slice(messageIndex + 1);
+    const hasResponse = messagesAfter.some(m => m.role === "assistant");
+    
+    if (hasResponse) {
+      console.log("[ChatService] Message already has a response, skipping");
+      return;
+    }
+
+    // Process the message
+    let result;
+    try {
+      // Get all messages up to (but not including) the pending one
+      const messagesUpToPending = session.messages.slice(0, messageIndex);
+      
+      result = await this.processMessage(
+        {
+          id: session.id,
+          context: session.context as ChatSessionContext,
+          messages: messagesUpToPending,
+        },
+        userMessageContent
+      );
+      console.log("[ChatService] Message processed, response length:", result.response.length);
+    } catch (error) {
+      console.error("[ChatService] Error processing message:", error);
+      throw error;
+    }
+
+    // Store assistant response
+    const assistantMessageId = nanoid();
+    try {
+      await db.insert(chatMessages).values({
+        id: assistantMessageId,
+        sessionId,
+        role: "assistant",
+        content: result.response,
+        createdAt: new Date(),
+      });
+      console.log("[ChatService] Assistant message stored:", assistantMessageId);
+    } catch (error) {
+      console.error("[ChatService] Error storing assistant message:", error);
+      throw error;
+    }
+
+    // Update session context
+    await db
+      .update(chatSessions)
+      .set({
+        context: result.updatedContext,
+        updatedAt: new Date(),
+      })
+      .where(eq(chatSessions.id, sessionId));
+
+    console.log("[ChatService] Existing message processed successfully");
+  }
+
+  /**
+   * Process a pending message if one exists
+   * This is called when a session is loaded to ensure no messages are left unprocessed
+   */
+  async processPendingMessage(sessionId: string): Promise<void> {
+    try {
+      const pendingMessage = await this.checkPendingMessage(sessionId);
+      
+      if (pendingMessage) {
+        console.log("[ChatService] Found pending message, processing:", pendingMessage.id);
+        // Process the existing message (this will add the assistant response)
+        await this.processExistingMessage(sessionId, pendingMessage.id, pendingMessage.content);
+        console.log("[ChatService] Pending message processed successfully");
+      }
+    } catch (error) {
+      console.error("[ChatService] Error processing pending message:", error);
+      // Don't throw - we don't want to block the session load if processing fails
+      // The message will be processed on the next attempt
+    }
+  }
+
+  /**
    * Start a new chat session
    */
   async startSession(options: StartSessionOptions) {
     const { userId, organizationId, projectType, projectDescription } = options;
 
-    console.log("[ChatService] Starting session:", { userId, organizationId, projectType });
+    console.log("[ChatService] Starting session:", { userId, organizationId, projectType, projectDescription });
 
     const id = nanoid();
     const now = new Date();
+
+    // Generate project name from description (first 50 chars or a default name)
+    const projectName = projectDescription.length > 50
+      ? projectDescription.substring(0, 47) + "..."
+      : projectDescription || "Novo Projeto";
+
+    // Create project first
+    const projectId = nanoid();
+    let createdProject;
+    try {
+      await db.insert(projects).values({
+        id: projectId,
+        organizationId,
+        name: projectName,
+        description: projectDescription,
+        type: projectType as any,
+        status: "draft",
+        createdAt: now,
+        updatedAt: now,
+      });
+      console.log("[ChatService] Project created:", projectId);
+      
+      // Verify project was created
+      createdProject = await db.query.projects.findFirst({
+        where: eq(projects.id, projectId),
+      });
+      
+      if (!createdProject) {
+        throw new Error("Project was not created successfully");
+      }
+      console.log("[ChatService] Project verified:", createdProject.id, createdProject.name);
+    } catch (error) {
+      console.error("[ChatService] Error creating project:", error);
+      throw new Error(`Failed to create project: ${error instanceof Error ? error.message : String(error)}`);
+    }
 
     const initialContext: ChatSessionContext = {
       projectType,
@@ -61,14 +240,14 @@ export class ChatService {
         id,
         userId,
         organizationId,
-        projectId: null,
+        projectId: projectId,
         context: initialContext,
         status: "active",
         createdAt: now,
         updatedAt: now,
       });
 
-      console.log("[ChatService] Session created:", id);
+      console.log("[ChatService] Session created:", id, "with projectId:", projectId);
 
       // Get initial message
       const initialMessage = await this.getInitialMessage(projectType);
@@ -86,6 +265,13 @@ export class ChatService {
       console.log("[ChatService] Initial message stored");
     } catch (error) {
       console.error("[ChatService] Error creating session:", error);
+      // If session creation fails, try to clean up the project
+      try {
+        await db.delete(projects).where(eq(projects.id, projectId));
+        console.log("[ChatService] Cleaned up project after session creation failure");
+      } catch (cleanupError) {
+        console.error("[ChatService] Error cleaning up project:", cleanupError);
+      }
       throw error;
     }
 
@@ -93,9 +279,15 @@ export class ChatService {
       where: eq(chatSessions.id, id),
       with: {
         messages: true,
+        project: true,
       },
     });
 
+    if (!session) {
+      throw new Error("Session was not created successfully");
+    }
+
+    console.log("[ChatService] Session returned with projectId:", session.projectId);
     return session;
   }
 
@@ -393,13 +585,23 @@ Retorne APENAS o JSON, sem explicações.`;
   ): Promise<string> {
     const info = context.collectedInfo || {};
 
-    // Create or get project
+    // Get project
     let projectId = session.projectId;
 
     if (!projectId) {
-      // Would need to create a project and organization
-      // For now, we'll throw an error
       throw new Error("Project ID is required. Please create a project first.");
+    }
+
+    // Update project with final information if available
+    const finalDescription = (info.projectDescription as string) || context.projectDescription;
+    if (finalDescription) {
+      await db
+        .update(projects)
+        .set({
+          description: finalDescription,
+          updatedAt: new Date(),
+        })
+        .where(eq(projects.id, projectId));
     }
 
     // Generate schedule using the scheduler service
@@ -464,6 +666,16 @@ Retorne APENAS o JSON, sem explicações.`;
         updatedAt: now,
       });
     }
+
+    // Update chat session with scheduleId and mark as completed
+    await db
+      .update(chatSessions)
+      .set({
+        scheduleId,
+        status: "completed",
+        updatedAt: new Date(),
+      })
+      .where(eq(chatSessions.id, session.id));
 
     return scheduleId;
   }
