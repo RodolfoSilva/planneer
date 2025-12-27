@@ -19,6 +19,7 @@ export const schedules = pgTable('schedules', {
   startDate: date('start_date'),
   endDate: date('end_date'),
   status: scheduleStatusEnum('status').default('draft').notNull(),
+  xerFileKey: text('xer_file_key'), // S3 key for the .xer file
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

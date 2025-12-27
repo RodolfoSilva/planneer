@@ -10,8 +10,9 @@ import {
   UnauthorizedError,
 } from "../lib/errors";
 import { getUserOrganizations } from "../services/organization";
-import { generateXER } from "../services/export/xer-generator";
+import { generateXER, generateAndUploadXER } from "../services/export/xer-generator";
 import { generateXML } from "../services/export/xml-generator";
+import { getSignedUrl } from "../services/storage";
 
 // Helper to get authenticated user
 async function getAuthUser(request: Request) {
@@ -264,12 +265,28 @@ export const scheduleRoutes = new Elysia({ prefix: "/api/schedules" })
       let content: string;
       let contentType: string;
       let filename: string;
+      let xerFileKey: string | undefined;
 
       switch (body.format) {
         case "xer":
           content = await generateXER(schedule as any);
           contentType = "text/plain";
           filename = `${schedule.name}.xer`;
+          
+          // Also upload to S3 and update schedule
+          try {
+            xerFileKey = await generateAndUploadXER(schedule as any);
+            await db
+              .update(schedules)
+              .set({
+                xerFileKey,
+                updatedAt: new Date(),
+              })
+              .where(eq(schedules.id, params.id));
+          } catch (error) {
+            console.error("Error uploading XER to S3:", error);
+            // Continue even if upload fails - we still return the content
+          }
           break;
         case "xml":
           content = await generateXML(schedule as any);
@@ -286,6 +303,7 @@ export const scheduleRoutes = new Elysia({ prefix: "/api/schedules" })
           content,
           contentType,
           filename,
+          xerFileKey, // Include the S3 key if XER was uploaded
         },
       };
     },
@@ -295,6 +313,50 @@ export const scheduleRoutes = new Elysia({ prefix: "/api/schedules" })
       }),
       body: t.Object({
         format: t.Union([t.Literal("xer"), t.Literal("xml")]),
+      }),
+    }
+  )
+  .get(
+    "/:id/download-xer",
+    async ({ params, request }) => {
+      const user = await getAuthUser(request);
+      const schedule = await db.query.schedules.findFirst({
+        where: eq(schedules.id, params.id),
+        with: { project: true },
+      });
+
+      if (!schedule) {
+        throw new NotFoundError("Schedule", params.id);
+      }
+
+      const userOrgs = await getUserOrganizations(user.id);
+      const hasAccess = userOrgs.some(
+        (o) => o.organizationId === schedule.project.organizationId
+      );
+
+      if (!hasAccess) {
+        throw new ForbiddenError("You do not have access to this schedule");
+      }
+
+      // Check if XER file exists
+      if (!schedule.xerFileKey) {
+        throw new NotFoundError("XER file", "not found for this schedule");
+      }
+
+      // Generate signed URL for download (valid for 1 hour)
+      const downloadUrl = await getSignedUrl(schedule.xerFileKey, 3600);
+
+      return {
+        success: true,
+        data: {
+          downloadUrl,
+          filename: `${schedule.name}.xer`,
+        },
+      };
+    },
+    {
+      params: t.Object({
+        id: t.String(),
       }),
     }
   )

@@ -14,6 +14,7 @@ import { LLMService } from "../ai/llm";
 import { RAGService } from "../ai/rag";
 import { ScheduleGenerator } from "../scheduler";
 import { PROJECT_TYPE_LABELS } from "@planneer/shared";
+import { generateAndUploadXER } from "../export/xer-generator";
 
 const llm = new LLMService();
 const rag = new RAGService();
@@ -292,6 +293,139 @@ export class ChatService {
   }
 
   /**
+   * Get or create a chat session for an existing project
+   * Returns the most recent active session for the project, or creates a new one
+   */
+  async getOrCreateSessionForProject(options: {
+    userId: string;
+    projectId: string;
+  }) {
+    const { userId, projectId } = options;
+
+    console.log("[ChatService] Getting or creating session for project:", projectId);
+
+    // First, verify the project exists and get its details
+    const project = await db.query.projects.findFirst({
+      where: eq(projects.id, projectId),
+    });
+
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    // Check if user has access to the project's organization
+    // (This should be verified at the route level, but we check here too)
+    
+    // Look for an existing active session for this project
+    // Get all sessions for this project and user, then find the most recent active one
+    const allSessions = await db.query.chatSessions.findMany({
+      where: eq(chatSessions.projectId, projectId),
+      with: {
+        messages: {
+          orderBy: (messages, { desc }) => [desc(messages.createdAt)],
+        },
+      },
+    });
+
+    // Filter for active sessions by this user and get the most recent
+    const activeSessions = allSessions
+      .filter(s => s.status === "active" && s.userId === userId)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    
+    const existingSession = activeSessions[0] || null;
+
+    // If there's an active session, return it with properly ordered messages
+    if (existingSession) {
+      console.log("[ChatService] Found existing active session:", existingSession.id);
+      // Fetch the session again with messages ordered correctly
+      const sessionWithMessages = await db.query.chatSessions.findFirst({
+        where: eq(chatSessions.id, existingSession.id),
+        with: {
+          messages: {
+            orderBy: (messages, { asc }) => [asc(messages.createdAt)],
+          },
+          project: true,
+        },
+      });
+      return sessionWithMessages || existingSession;
+    }
+
+    // Otherwise, create a new session for this project
+    console.log("[ChatService] Creating new session for existing project");
+    const id = nanoid();
+    const now = new Date();
+
+    const initialContext: ChatSessionContext = {
+      projectType: project.type || undefined,
+      projectDescription: project.description || undefined,
+      currentStep: "initial",
+      collectedInfo: {
+        projectDescription: project.description,
+      },
+      similarTemplateIds: [],
+    };
+
+    // Get initial message for existing project
+    const initialMessage = await this.getInitialMessageForExistingProject(project.name, project.type || undefined);
+
+    try {
+      await db.insert(chatSessions).values({
+        id,
+        userId,
+        organizationId: project.organizationId,
+        projectId: projectId,
+        context: initialContext,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Store initial assistant message
+      await db.insert(chatMessages).values({
+        id: nanoid(),
+        sessionId: id,
+        role: "assistant",
+        content: initialMessage,
+        createdAt: now,
+      });
+
+      console.log("[ChatService] New session created for existing project:", id);
+    } catch (error) {
+      console.error("[ChatService] Error creating session for existing project:", error);
+      throw error;
+    }
+
+    const session = await db.query.chatSessions.findFirst({
+      where: eq(chatSessions.id, id),
+      with: {
+        messages: true,
+        project: true,
+      },
+    });
+
+    if (!session) {
+      throw new Error("Session was not created successfully");
+    }
+
+    return session;
+  }
+
+  /**
+   * Get initial message for an existing project
+   */
+  async getInitialMessageForExistingProject(projectName: string, projectType?: string): Promise<string> {
+    const typeLabel = projectType
+      ? PROJECT_TYPE_LABELS[projectType as keyof typeof PROJECT_TYPE_LABELS]
+      : null;
+
+    if (typeLabel) {
+      return `Olá! Vou ajudá-lo a modificar e melhorar o cronograma do projeto **${projectName}** (${typeLabel}).\n\nComo posso ajudá-lo hoje? Você pode:\n- Criar um novo cronograma\n- Modificar um cronograma existente\n- Adicionar atividades ou recursos\n- Ajustar prazos ou dependências\n\nO que você gostaria de fazer?`;
+    }
+
+    return `Olá! Vou ajudá-lo a modificar e melhorar o cronograma do projeto **${projectName}**.\n\nComo posso ajudá-lo hoje? Você pode:\n- Criar um novo cronograma\n- Modificar um cronograma existente\n- Adicionar atividades ou recursos\n- Ajustar prazos ou dependências\n\nO que você gostaria de fazer?`;
+  }
+
+  /**
    * Send a message to a chat session and get AI response
    */
   async sendMessage(sessionId: string, content: string) {
@@ -509,6 +643,7 @@ REGRAS:
 2. Seja conciso e profissional
 3. Use linguagem em português brasileiro
 4. Quando tiver informações suficientes, pergunte se o usuário deseja gerar o cronograma
+5. IMPORTANTE: Este sistema exporta cronogramas APENAS no formato .xer (Primavera P6). NUNCA sugira exportação em PDF, Excel, CSV ou outros formatos. Sempre mencione que o cronograma será exportado em formato .xer para importação no Primavera P6.
 
 INFORMAÇÕES COLETADAS:
 ${JSON.stringify(context.collectedInfo || {}, null, 2)}
@@ -519,7 +654,14 @@ INFORMAÇÕES NECESSÁRIAS:
 - Data de início desejada
 - Marcos importantes
 - Recursos disponíveis (opcional)
-- Restrições e premissas (opcional)`;
+- Restrições e premissas (opcional)
+
+FORMATO DE EXPORTAÇÃO:
+- O cronograma gerado será exportado automaticamente em formato .xer (Primavera P6)
+- O arquivo .xer será gerado e armazenado automaticamente quando o cronograma for criado
+- O usuário poderá baixar o arquivo .xer através do link de download disponível
+- Este é o único formato de exportação disponível no sistema
+- O arquivo .xer pode ser importado diretamente no Primavera P6`;
 
     if (similarTemplateIds.length > 0) {
       prompt += `\n\nTEMPLATES SIMILARES ENCONTRADOS: ${similarTemplateIds.length} projetos similares foram identificados e serão usados como referência.`;
@@ -665,6 +807,48 @@ Retorne APENAS o JSON, sem explicações.`;
         createdAt: now,
         updatedAt: now,
       });
+    }
+
+    // Generate and upload XER file
+    try {
+      // Fetch the complete schedule with all relations needed for XER generation
+      const completeSchedule = await db.query.schedules.findFirst({
+        where: eq(schedules.id, scheduleId),
+        with: {
+          project: {
+            with: { organization: true },
+          },
+          activities: {
+            with: {
+              wbs: true,
+              predecessors: true,
+              resourceAssignments: {
+                with: { resource: true },
+              },
+            },
+          },
+          wbsItems: true,
+        },
+      });
+
+      if (completeSchedule) {
+        const xerFileKey = await generateAndUploadXER(completeSchedule as any);
+        
+        // Update schedule with XER file key
+        await db
+          .update(schedules)
+          .set({
+            xerFileKey,
+            updatedAt: new Date(),
+          })
+          .where(eq(schedules.id, scheduleId));
+        
+        console.log("[ChatService] XER file generated and uploaded:", xerFileKey);
+      }
+    } catch (error) {
+      console.error("[ChatService] Error generating/uploading XER file:", error);
+      // Don't throw - we don't want to fail schedule creation if XER generation fails
+      // The file can be generated later via the export endpoint
     }
 
     // Update chat session with scheduleId and mark as completed

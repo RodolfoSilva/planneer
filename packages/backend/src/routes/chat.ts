@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { eq, desc } from "drizzle-orm";
 import { db } from "../db";
-import { chatSessions, chatMessages } from "../db/schema";
+import { chatSessions, chatMessages, projects } from "../db/schema";
 import { auth } from "../auth";
 import {
   NotFoundError,
@@ -174,6 +174,42 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
     {
       params: t.Object({
         sessionId: t.String(),
+      }),
+    }
+  )
+  .post(
+    "/project/:projectId",
+    async ({ params, request }) => {
+      const user = await getAuthUser(request);
+
+      // Verify user has access to the project's organization
+      const projectResult = await db.query.projects.findFirst({
+        where: eq(projects.id, params.projectId),
+      });
+
+      if (!projectResult) {
+        throw new NotFoundError("Project", params.projectId);
+      }
+
+      const userOrgs = await getUserOrganizations(user.id);
+      const hasAccess = userOrgs.some(
+        (o) => o.organizationId === projectResult.organizationId
+      );
+
+      if (!hasAccess) {
+        throw new ForbiddenError("You do not have access to this project");
+      }
+
+      const session = await chatService.getOrCreateSessionForProject({
+        userId: user.id,
+        projectId: params.projectId,
+      });
+
+      return { success: true, data: session };
+    },
+    {
+      params: t.Object({
+        projectId: t.String(),
       }),
     }
   );

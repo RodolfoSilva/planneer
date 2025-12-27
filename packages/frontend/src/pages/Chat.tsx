@@ -1,8 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "@tanstack/react-router";
-import { Send, Sparkles, Calendar, ArrowRight, Loader2 } from "lucide-react";
-import { chat } from "@/lib/api";
+import {
+  Send,
+  Sparkles,
+  Calendar,
+  ArrowRight,
+  Loader2,
+  Download,
+} from "lucide-react";
+import { chat, schedules } from "@/lib/api";
 import { ChatMessage, TypingIndicator } from "@/components/ChatMessage";
 import { cn } from "@/lib/utils";
 import { PROJECT_TYPE_LABELS } from "@planneer/shared";
@@ -118,6 +125,28 @@ export function Chat() {
   });
 
   const serverMessages = sessionQuery.data?.data?.messages || [];
+  const scheduleId = sessionQuery.data?.data?.scheduleId;
+
+  // Fetch schedule if it exists
+  const scheduleQuery = useQuery({
+    queryKey: ["schedule", scheduleId],
+    queryFn: () => schedules.get(scheduleId!),
+    enabled: !!scheduleId,
+  });
+
+  const schedule = scheduleQuery.data?.data;
+
+  // Download XER mutation
+  const downloadXerMutation = useMutation({
+    mutationFn: () => schedules.downloadXer(scheduleId!),
+    onSuccess: (data) => {
+      // Open download URL in new tab
+      window.open(data.data.downloadUrl, "_blank");
+    },
+    onError: (err: Error) => {
+      setError(err.message || "Erro ao baixar arquivo .xer");
+    },
+  });
 
   // Combine server messages with optimistic messages
   // Optimistic messages are temporary and will be replaced by server response
@@ -405,22 +434,40 @@ export function Chat() {
 
         {sessionQuery.data?.data?.status === "completed" && (
           <div className="mt-3 p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-            <p className="text-sm text-emerald-700 flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              Cronograma gerado com sucesso!
-              {sessionQuery.data?.data?.scheduleId && (
-                <button
-                  onClick={() =>
-                    navigate({
-                      to: `/schedules/${sessionQuery.data?.data?.scheduleId}`,
-                    })
-                  }
-                  className="ml-auto text-emerald-600 font-medium hover:text-emerald-700 flex items-center gap-1"
-                >
-                  Ver cronograma <ArrowRight className="w-4 h-4" />
-                </button>
-              )}
-            </p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-emerald-700 flex items-center gap-2">
+                <Calendar className="w-4 h-4" />
+                Cronograma gerado com sucesso!
+              </p>
+              <div className="flex items-center gap-2">
+                {schedule?.xerFileKey && (
+                  <button
+                    onClick={() => downloadXerMutation.mutate()}
+                    disabled={downloadXerMutation.isPending}
+                    className="text-sm text-emerald-600 font-medium hover:text-emerald-700 flex items-center gap-1 px-2 py-1 rounded hover:bg-emerald-100 transition-colors"
+                  >
+                    {downloadXerMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                    Baixar .xer
+                  </button>
+                )}
+                {scheduleId && (
+                  <button
+                    onClick={() =>
+                      navigate({
+                        to: `/schedules/${scheduleId}`,
+                      })
+                    }
+                    className="text-sm text-emerald-600 font-medium hover:text-emerald-700 flex items-center gap-1 px-2 py-1 rounded hover:bg-emerald-100 transition-colors"
+                  >
+                    Ver cronograma <ArrowRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import { formatDateISO } from '@planneer/shared';
+import { uploadFile } from '../storage';
 
 interface ScheduleWithRelations {
   id: string;
@@ -143,6 +144,26 @@ export async function generateXER(schedule: ScheduleWithRelations): Promise<stri
   lines.push('%E');
   
   return lines.join('\n');
+}
+
+/**
+ * Generate XER file and upload to S3
+ * Returns the S3 key of the uploaded file
+ */
+export async function generateAndUploadXER(
+  schedule: ScheduleWithRelations
+): Promise<string> {
+  // Generate XER content
+  const xerContent = await generateXER(schedule);
+  
+  // Create S3 key: schedules/{scheduleId}/{scheduleName}.xer
+  const sanitizedName = schedule.name.replace(/[^a-zA-Z0-9-_]/g, '_');
+  const s3Key = `schedules/${schedule.id}/${sanitizedName}.xer`;
+  
+  // Upload to S3
+  await uploadFile(s3Key, xerContent, 'text/plain');
+  
+  return s3Key;
 }
 
 

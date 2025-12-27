@@ -1,19 +1,22 @@
-import { useQuery } from '@tanstack/react-query';
-import { useParams, Link } from '@tanstack/react-router';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { useParams, Link, useNavigate } from '@tanstack/react-router';
 import { 
   ArrowLeft, 
   Calendar, 
   Plus, 
   MoreVertical,
   Settings,
-  Trash2
+  Trash2,
+  Sparkles,
+  Download
 } from 'lucide-react';
-import { projects } from '@/lib/api';
+import { projects, chat, schedules } from '@/lib/api';
 import { formatDate, cn } from '@/lib/utils';
 import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '@planneer/shared';
 
 export function ProjectDetail() {
   const { projectId } = useParams({ strict: false });
+  const navigate = useNavigate();
   
   const projectQuery = useQuery({
     queryKey: ['project', projectId],
@@ -22,6 +25,29 @@ export function ProjectDetail() {
   });
   
   const project = projectQuery.data?.data;
+
+  // Download XER mutation
+  const downloadXerMutation = useMutation({
+    mutationFn: (scheduleId: string) => schedules.downloadXer(scheduleId),
+    onSuccess: (data) => {
+      // Open download URL in new tab
+      window.open(data.data.downloadUrl, "_blank");
+    },
+    onError: (err: Error) => {
+      console.error("[ProjectDetail] Error downloading XER:", err);
+    },
+  });
+
+  // Mutation to get or create chat session for this project
+  const chatSessionMutation = useMutation({
+    mutationFn: () => chat.getOrCreateSessionForProject(projectId!),
+    onSuccess: (data) => {
+      navigate({ to: `/chat/${data.data.id}` });
+    },
+    onError: (err: Error) => {
+      console.error('[ProjectDetail] Error getting chat session:', err);
+    },
+  });
   
   if (projectQuery.isLoading) {
     return (
@@ -79,6 +105,14 @@ export function ProjectDetail() {
         </div>
         
         <div className="flex items-center gap-2">
+          <button 
+            onClick={() => chatSessionMutation.mutate()}
+            disabled={chatSessionMutation.isPending}
+            className="btn-primary"
+          >
+            <Sparkles className="w-4 h-4 mr-2" />
+            {chatSessionMutation.isPending ? 'Abrindo...' : 'Modificar com IA'}
+          </button>
           <button className="btn-secondary">
             <Settings className="w-4 h-4 mr-2" />
             Editar
@@ -132,27 +166,41 @@ export function ProjectDetail() {
         <div className="divide-y divide-slate-100">
           {project.schedules?.length > 0 ? (
             project.schedules.map((schedule: any) => (
-              <Link
+              <div
                 key={schedule.id}
-                to={`/schedules/${schedule.id}`}
                 className="flex items-center gap-4 p-4 hover:bg-slate-50 transition-colors"
               >
-                <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
-                  <Calendar className="w-5 h-5 text-emerald-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-slate-900">{schedule.name}</p>
-                  <p className="text-sm text-slate-500">
-                    {schedule.startDate ? formatDate(schedule.startDate) : 'Sem data de início'}
-                  </p>
-                </div>
-                <span className={cn(
-                  "badge",
-                  schedule.status === 'active' ? 'badge-success' : 'badge-warning'
-                )}>
-                  {schedule.status}
-                </span>
-              </Link>
+                <Link
+                  to={`/schedules/${schedule.id}`}
+                  className="flex items-center gap-4 flex-1 min-w-0"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
+                    <Calendar className="w-5 h-5 text-emerald-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-slate-900">{schedule.name}</p>
+                    <p className="text-sm text-slate-500">
+                      {schedule.startDate ? formatDate(schedule.startDate) : 'Sem data de início'}
+                    </p>
+                  </div>
+                  <span className={cn(
+                    "badge",
+                    schedule.status === 'active' ? 'badge-success' : 'badge-warning'
+                  )}>
+                    {schedule.status}
+                  </span>
+                </Link>
+                {schedule.xerFileKey && (
+                  <button
+                    onClick={() => downloadXerMutation.mutate(schedule.id)}
+                    disabled={downloadXerMutation.isPending}
+                    className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 hover:text-slate-900"
+                    title="Baixar arquivo .xer"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             ))
           ) : (
             <div className="p-8 text-center">

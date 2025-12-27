@@ -119,6 +119,11 @@ export const schedules = {
       { method: 'POST', body: { format } }
     ),
   
+  downloadXer: (id: string) =>
+    apiRequest<{ success: boolean; data: { downloadUrl: string; filename: string } }>(
+      `/api/schedules/${id}/download-xer`
+    ),
+  
   delete: (id: string) =>
     apiRequest<{ success: boolean; data: { deleted: boolean } }>(`/api/schedules/${id}`, { method: 'DELETE' }),
 };
@@ -179,6 +184,12 @@ export const chat = {
   generateSchedule: (sessionId: string) =>
     apiRequest<{ success: boolean; data: any }>(
       `/api/chat/${sessionId}/generate`,
+      { method: 'POST' }
+    ),
+  
+  getOrCreateSessionForProject: (projectId: string) =>
+    apiRequest<{ success: boolean; data: any }>(
+      `/api/chat/project/${projectId}`,
       { method: 'POST' }
     ),
 };

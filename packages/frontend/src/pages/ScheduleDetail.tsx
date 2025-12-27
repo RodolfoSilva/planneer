@@ -42,6 +42,14 @@ export function ScheduleDetail() {
       URL.revokeObjectURL(url);
     },
   });
+
+  const downloadXerMutation = useMutation({
+    mutationFn: () => schedules.downloadXer(scheduleId!),
+    onSuccess: (data) => {
+      // Open download URL in new tab
+      window.open(data.data.downloadUrl, "_blank");
+    },
+  });
   
   const schedule = scheduleQuery.data?.data;
   
@@ -124,33 +132,51 @@ export function ScheduleDetail() {
               </button>
             </div>
             
-            {/* Export dropdown */}
-            <div className="relative group">
-              <button className="btn-secondary">
-                {exportMutation.isPending ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                ) : (
-                  <Download className="w-4 h-4 mr-2" />
-                )}
-                Exportar
-              </button>
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+            <div className="flex items-center gap-2">
+              {/* Download generated XER file if it exists */}
+              {schedule?.xerFileKey && (
                 <button
-                  onClick={() => exportMutation.mutate('xer')}
-                  disabled={exportMutation.isPending}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 first:rounded-t-lg"
+                  onClick={() => downloadXerMutation.mutate()}
+                  disabled={downloadXerMutation.isPending}
+                  className="btn-primary"
                 >
-                  <FileDown className="w-4 h-4" />
-                  Primavera XER
+                  {downloadXerMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Download className="w-4 h-4 mr-2" />
+                  )}
+                  Baixar .xer
                 </button>
-                <button
-                  onClick={() => exportMutation.mutate('xml')}
-                  disabled={exportMutation.isPending}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 last:rounded-b-lg"
-                >
-                  <FileDown className="w-4 h-4" />
-                  Primavera XML (P6)
+              )}
+              
+              {/* Export dropdown */}
+              <div className="relative group">
+                <button className="btn-secondary">
+                  {exportMutation.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Download className="w-4 h-4 mr-2" />
+                  )}
+                  Exportar
                 </button>
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                  <button
+                    onClick={() => exportMutation.mutate('xer')}
+                    disabled={exportMutation.isPending}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 first:rounded-t-lg"
+                  >
+                    <FileDown className="w-4 h-4" />
+                    Primavera XER
+                  </button>
+                  <button
+                    onClick={() => exportMutation.mutate('xml')}
+                    disabled={exportMutation.isPending}
+                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 last:rounded-b-lg"
+                  >
+                    <FileDown className="w-4 h-4" />
+                    Primavera XML (P6)
+                  </button>
+                </div>
               </div>
             </div>
           </div>
