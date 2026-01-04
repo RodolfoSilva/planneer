@@ -2,7 +2,7 @@ import { Elysia, t } from "elysia";
 import { nanoid } from "nanoid";
 import { eq, desc } from "drizzle-orm";
 import { db } from "../db";
-import { projects, projectTypeEnum, projectStatusEnum } from "../db/schema";
+import { projects, schedules, projectTypeEnum, projectStatusEnum } from "../db/schema";
 import { auth } from "../auth";
 import {
   NotFoundError,
@@ -10,6 +10,7 @@ import {
   UnauthorizedError,
 } from "../lib/errors";
 import { getUserOrganizations } from "../services/organization";
+import { deleteFile } from "../services/storage";
 
 // Helper to get authenticated user
 async function getAuthUser(request: Request) {
@@ -243,6 +244,9 @@ export const projectRoutes = new Elysia({ prefix: "/api/projects" })
       const user = await getAuthUser(request);
       const project = await db.query.projects.findFirst({
         where: eq(projects.id, params.id),
+        with: {
+          schedules: true,
+        },
       });
 
       if (!project) {
@@ -260,6 +264,24 @@ export const projectRoutes = new Elysia({ prefix: "/api/projects" })
         );
       }
 
+      // Delete S3 files for all schedules before deleting the project
+      // The schedules will be deleted in cascade by the database
+      const schedulesToClean = project.schedules || [];
+      const deletePromises = schedulesToClean
+        .filter((schedule) => schedule.xerFileKey)
+        .map((schedule) =>
+          deleteFile(schedule.xerFileKey!).catch((error) => {
+            // Log error but don't fail the deletion if S3 cleanup fails
+            console.error(
+              `[Projects API] Failed to delete S3 file for schedule ${schedule.id}:`,
+              error
+            );
+          })
+        );
+
+      await Promise.all(deletePromises);
+
+      // Delete the project (schedules will be deleted in cascade by the database)
       await db.delete(projects).where(eq(projects.id, params.id));
 
       return { success: true, data: { deleted: true } };

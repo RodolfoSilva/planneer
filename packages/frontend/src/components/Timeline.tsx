@@ -64,45 +64,61 @@ export function Timeline({ activities, startDate, endDate }: TimelineProps) {
     return { left: leftPercent, width: widthPercent };
   };
   
+  // Calculate minimum width based on total days (minimum 28px per day for readability)
+  const minDayWidth = 28;
+  const timelineMinWidth = Math.max(timelineData.totalDays * minDayWidth, 1200);
+
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[800px]">
+      <div style={{ minWidth: `${timelineMinWidth}px`, width: `${timelineMinWidth}px` }}>
         {/* Header with dates */}
         <div className="border-b border-slate-200 bg-slate-50 sticky top-0 z-10">
-          <div className="flex">
+          <div className="flex flex-nowrap">
             {/* Activity name column */}
-            <div className="w-64 flex-shrink-0 px-4 py-2 border-r border-slate-200">
+            <div className="w-64 flex-shrink-0 px-4 py-2 border-r border-slate-200 flex items-center">
               <span className="text-xs font-semibold text-slate-600 uppercase">
                 Atividade
               </span>
             </div>
             
             {/* Timeline header */}
-            <div className="flex-1 flex">
-              {timelineData.weeks.map((week, i) => (
-                <div 
-                  key={i}
-                  className="flex-1 text-center border-r border-slate-200 last:border-r-0"
-                  style={{ minWidth: `${(week.days.length / timelineData.totalDays) * 100}%` }}
-                >
-                  <div className="text-xs font-medium text-slate-700 py-1 border-b border-slate-200">
-                    {format(week.start, "dd MMM", { locale: ptBR })}
+            <div className="flex flex-nowrap" style={{ width: `${timelineMinWidth}px` }}>
+              {timelineData.weeks.map((week, i) => {
+                const weekWidth = (week.days.length / timelineData.totalDays) * timelineMinWidth;
+                return (
+                  <div 
+                    key={i}
+                    className="text-center border-r border-slate-200 last:border-r-0 flex-shrink-0"
+                    style={{ width: `${weekWidth}px`, minWidth: `${weekWidth}px` }}
+                  >
+                    <div className="text-xs font-medium text-slate-700 py-1.5 border-b border-slate-200 whitespace-nowrap">
+                      {format(week.start, "dd MMM", { locale: ptBR })}
+                    </div>
+                    <div className="flex flex-nowrap">
+                      {week.days.map((day, j) => {
+                        const dayWidth = timelineMinWidth / timelineData.totalDays;
+                        return (
+                          <div 
+                            key={j} 
+                            className={cn(
+                              "text-xs text-slate-500 py-1.5 px-0.5 border-r border-slate-100 last:border-r-0 flex-shrink-0 flex items-center justify-center whitespace-nowrap",
+                              day.getDay() === 0 || day.getDay() === 6 ? "bg-slate-100" : "bg-white"
+                            )}
+                            style={{ 
+                              width: `${dayWidth}px`, 
+                              minWidth: `${dayWidth}px`,
+                              maxWidth: `${dayWidth}px`
+                            }}
+                            title={format(day, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                          >
+                            {format(day, 'd')}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <div className="flex">
-                    {week.days.map((day, j) => (
-                      <div 
-                        key={j} 
-                        className={cn(
-                          "flex-1 text-[10px] text-slate-400 py-0.5",
-                          day.getDay() === 0 || day.getDay() === 6 ? "bg-slate-100" : ""
-                        )}
-                      >
-                        {format(day, 'd')}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -113,7 +129,7 @@ export function Timeline({ activities, startDate, endDate }: TimelineProps) {
             const position = getActivityPosition(activity);
             
             return (
-              <div key={activity.id} className="flex group hover:bg-slate-50">
+              <div key={activity.id} className="flex flex-nowrap group hover:bg-slate-50">
                 {/* Activity name */}
                 <div className="w-64 flex-shrink-0 px-4 py-2 border-r border-slate-200">
                   <p className="text-sm font-medium text-slate-900 truncate" title={activity.name}>
@@ -123,7 +139,10 @@ export function Timeline({ activities, startDate, endDate }: TimelineProps) {
                 </div>
                 
                 {/* Timeline bar */}
-                <div className="flex-1 relative h-12">
+                <div 
+                  className="relative h-12 flex-shrink-0"
+                  style={{ width: `${timelineMinWidth}px`, minWidth: `${timelineMinWidth}px` }}
+                >
                   {position && (
                     <div
                       className={cn(
@@ -133,8 +152,11 @@ export function Timeline({ activities, startDate, endDate }: TimelineProps) {
                           : "bg-primary-500 group-hover:bg-primary-600"
                       )}
                       style={activity.activityType === 'milestone' 
-                        ? { left: `${position.left}%` }
-                        : { left: `${position.left}%`, width: `${Math.max(position.width, 1)}%` }
+                        ? { left: `${(position.left / 100) * timelineMinWidth}px` }
+                        : { 
+                            left: `${(position.left / 100) * timelineMinWidth}px`, 
+                            width: `${Math.max((position.width / 100) * timelineMinWidth, 4)}px` 
+                          }
                       }
                     >
                       {activity.activityType !== 'milestone' && (

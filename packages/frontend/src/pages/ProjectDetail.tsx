@@ -1,4 +1,6 @@
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, Link, useNavigate } from '@tanstack/react-router';
 import { 
   ArrowLeft, 
@@ -8,15 +10,25 @@ import {
   Settings,
   Trash2,
   Sparkles,
-  Download
+  Download,
+  AlertTriangle,
+  Loader2,
+  X
 } from 'lucide-react';
 import { projects, chat, schedules } from '@/lib/api';
 import { formatDate, cn } from '@/lib/utils';
-import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS } from '@planneer/shared';
+import { PROJECT_TYPE_LABELS, PROJECT_STATUS_LABELS, type ProjectType, type ProjectStatus } from '@planneer/shared';
+
+// Modal wrapper using portal
+function Modal({ children }: { children: React.ReactNode }) {
+  return createPortal(children, document.body);
+}
 
 export function ProjectDetail() {
   const { projectId } = useParams({ strict: false });
   const navigate = useNavigate();
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   
   const projectQuery = useQuery({
     queryKey: ['project', projectId],
@@ -46,6 +58,19 @@ export function ProjectDetail() {
     },
     onError: (err: Error) => {
       console.error('[ProjectDetail] Error getting chat session:', err);
+    },
+  });
+
+  // Delete project mutation
+  const queryClient = useQueryClient();
+  const deleteProjectMutation = useMutation({
+    mutationFn: () => projects.delete(projectId!),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      navigate({ to: '/projects' });
+    },
+    onError: (err: Error) => {
+      console.error('[ProjectDetail] Error deleting project:', err);
     },
   });
   
@@ -113,12 +138,18 @@ export function ProjectDetail() {
             <Sparkles className="w-4 h-4 mr-2" />
             {chatSessionMutation.isPending ? 'Abrindo...' : 'Modificar com IA'}
           </button>
-          <button className="btn-secondary">
+          <button 
+            onClick={() => setShowEditModal(true)}
+            className="btn-secondary"
+          >
             <Settings className="w-4 h-4 mr-2" />
             Editar
           </button>
-          <button className="btn-ghost">
-            <MoreVertical className="w-4 h-4" />
+          <button 
+            onClick={() => setShowDeleteModal(true)}
+            className="btn-ghost text-red-600 hover:text-red-700 hover:bg-red-50"
+          >
+            <Trash2 className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -210,7 +241,309 @@ export function ProjectDetail() {
           )}
         </div>
       </div>
+
+      {/* Edit Project Modal */}
+      {showEditModal && project && (
+        <EditProjectModal
+          project={project}
+          onClose={() => setShowEditModal(false)}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && project && (
+        <DeleteConfirmModal
+          project={project}
+          onClose={() => setShowDeleteModal(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// Edit Project Modal
+function EditProjectModal({
+  project,
+  onClose,
+}: {
+  project: any;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [formData, setFormData] = useState({
+    name: project.name || '',
+    description: project.description || '',
+    type: project.type || 'other' as ProjectType,
+    status: project.status || 'draft' as ProjectStatus,
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  const updateMutation = useMutation({
+    mutationFn: () => projects.update(project.id, {
+      name: formData.name,
+      description: formData.description || undefined,
+      type: formData.type,
+      status: formData.status,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project', project.id] });
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      onClose();
+    },
+    onError: (err: Error) => {
+      setError(err.message || 'Erro ao atualizar projeto');
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.name.trim()) {
+      setError('O nome do projeto é obrigatório');
+      return;
+    }
+    setError(null);
+    updateMutation.mutate();
+  };
+
+  const handleChange = (field: keyof typeof formData, value: any) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  return (
+    <Modal>
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
+          {/* Header */}
+          <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+            <h2 className="text-xl font-display font-bold text-slate-900">
+              Editar Projeto
+            </h2>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+              disabled={updateMutation.isPending}
+            >
+              <X className="w-5 h-5 text-slate-500" />
+            </button>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="p-6 space-y-6">
+            {/* Name */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Nome *
+              </label>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => handleChange('name', e.target.value)}
+                required
+                maxLength={255}
+                className="input"
+                disabled={updateMutation.isPending}
+                placeholder="Nome do projeto"
+              />
+            </div>
+
+            {/* Description */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Descrição
+              </label>
+              <textarea
+                value={formData.description}
+                onChange={(e) => handleChange('description', e.target.value)}
+                rows={4}
+                className="input resize-none"
+                disabled={updateMutation.isPending}
+                placeholder="Descrição do projeto (opcional)"
+              />
+            </div>
+
+            {/* Type */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Tipo *
+              </label>
+              <select
+                value={formData.type}
+                onChange={(e) => handleChange('type', e.target.value as ProjectType)}
+                required
+                className="input"
+                disabled={updateMutation.isPending}
+              >
+                {Object.entries(PROJECT_TYPE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Status */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Status *
+              </label>
+              <select
+                value={formData.status}
+                onChange={(e) => handleChange('status', e.target.value as ProjectStatus)}
+                required
+                className="input"
+                disabled={updateMutation.isPending}
+              >
+                {Object.entries(PROJECT_STATUS_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                {error}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-4">
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn-secondary flex-1"
+                disabled={updateMutation.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="btn-primary flex-1"
+                disabled={updateMutation.isPending || !formData.name.trim()}
+              >
+                {updateMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Salvando...
+                  </>
+                ) : (
+                  'Salvar Alterações'
+                )}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// Delete Confirmation Modal
+function DeleteConfirmModal({
+  project,
+  onClose,
+}: {
+  project: any;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [confirmName, setConfirmName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: () => projects.delete(project.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      navigate({ to: "/projects" });
+      onClose();
+    },
+    onError: (err: Error) => {
+      setError(err.message || "Erro ao excluir projeto");
+    },
+  });
+
+  const handleDelete = () => {
+    if (confirmName !== project.name) {
+      setError("O nome não corresponde");
+      return;
+    }
+    deleteMutation.mutate();
+  };
+
+  return (
+    <Modal>
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
+          <div className="p-6">
+            <div className="w-14 h-14 bg-red-100 rounded-xl flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="w-7 h-7 text-red-600" />
+            </div>
+
+            <h2 className="text-xl font-display font-bold text-slate-900 text-center mb-2">
+              Excluir Projeto
+            </h2>
+
+            <p className="text-slate-600 text-center mb-6">
+              Esta ação é <strong>irreversível</strong>. Todos os cronogramas
+              e dados associados a{" "}
+              <strong>"{project.name}"</strong> serão permanentemente
+              excluídos.
+            </p>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                Digite <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded">{project.name}</span> para confirmar
+              </label>
+              <input
+                type="text"
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                placeholder="Nome do projeto"
+                className="input"
+              />
+            </div>
+
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                {error}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn-secondary flex-1"
+                disabled={deleteMutation.isPending}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDelete}
+                className="btn-danger flex-1"
+                disabled={
+                  deleteMutation.isPending || confirmName !== project.name
+                }
+              >
+                {deleteMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Excluindo...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Excluir
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

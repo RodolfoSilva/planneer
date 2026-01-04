@@ -15,7 +15,7 @@ import {
   generateAndUploadXER,
 } from "../services/export/xer-generator";
 import { generateXML } from "../services/export/xml-generator";
-import { getSignedDownloadUrl } from "../services/storage";
+import { getSignedDownloadUrl, deleteFile } from "../services/storage";
 
 // Helper to get authenticated user
 async function getAuthUser(request: Request) {
@@ -390,6 +390,19 @@ export const scheduleRoutes = new Elysia({ prefix: "/api/schedules" })
         throw new ForbiddenError(
           "You do not have permission to delete this schedule"
         );
+      }
+
+      // Delete S3 file if it exists
+      if (schedule.xerFileKey) {
+        try {
+          await deleteFile(schedule.xerFileKey);
+        } catch (error) {
+          // Log error but don't fail the deletion if S3 cleanup fails
+          console.error(
+            `[Schedules API] Failed to delete S3 file for schedule ${schedule.id}:`,
+            error
+          );
+        }
       }
 
       await db.delete(schedules).where(eq(schedules.id, params.id));

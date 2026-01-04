@@ -1,17 +1,36 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link } from '@tanstack/react-router';
-import { Plus, Calendar, Search, Download, MoreVertical } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from '@tanstack/react-router';
+import { Plus, Calendar, Search, Download, MoreVertical, Trash2, Loader2, AlertTriangle } from 'lucide-react';
 import { schedules } from '@/lib/api';
 import { formatDate, cn } from '@/lib/utils';
 import { SCHEDULE_STATUS_LABELS } from '@planneer/shared';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
+
+// Modal wrapper using portal
+function Modal({ children }: { children: React.ReactNode }) {
+  return createPortal(children, document.body);
+}
 
 export function Schedules() {
   const [search, setSearch] = useState('');
+  const [deletingSchedule, setDeletingSchedule] = useState<any>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
   
   const schedulesQuery = useQuery({
     queryKey: ['schedules'],
     queryFn: () => schedules.list(),
+  });
+  
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => schedules.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      setDeletingSchedule(null);
+      setOpenMenuId(null);
+    },
   });
   
   const scheduleList = schedulesQuery.data?.data.items || [];
@@ -122,13 +141,39 @@ export function Schedules() {
                     </span>
                   </td>
                   <td className="px-4 py-4">
-                    <div className="flex items-center justify-end gap-1">
-                      <button className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
-                        <Download className="w-4 h-4 text-slate-400" />
-                      </button>
-                      <button className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
+                    <div className="flex items-center justify-end gap-1 relative">
+                      <button 
+                        className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setOpenMenuId(openMenuId === schedule.id ? null : schedule.id);
+                        }}
+                      >
                         <MoreVertical className="w-4 h-4 text-slate-400" />
                       </button>
+                      {openMenuId === schedule.id && (
+                        <>
+                          <div 
+                            className="fixed inset-0 z-10" 
+                            onClick={() => setOpenMenuId(null)}
+                          />
+                          <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-lg shadow-lg border border-slate-200 z-20">
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDeletingSchedule(schedule);
+                                setOpenMenuId(null);
+                              }}
+                              className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 first:rounded-t-lg last:rounded-b-lg"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                              Excluir
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -150,7 +195,81 @@ export function Schedules() {
           </tbody>
         </table>
       </div>
+      
+      {/* Delete Confirmation Modal */}
+      {deletingSchedule && (
+        <DeleteConfirmModal
+          schedule={deletingSchedule}
+          onClose={() => setDeletingSchedule(null)}
+          onConfirm={() => deleteMutation.mutate(deletingSchedule.id)}
+          isDeleting={deleteMutation.isPending}
+        />
+      )}
     </div>
+  );
+}
+
+// Delete Confirmation Modal
+function DeleteConfirmModal({
+  schedule,
+  onClose,
+  onConfirm,
+  isDeleting,
+}: {
+  schedule: any;
+  onClose: () => void;
+  onConfirm: () => void;
+  isDeleting: boolean;
+}) {
+  return (
+    <Modal>
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
+          <div className="p-6">
+            <div className="w-14 h-14 bg-red-100 rounded-xl flex items-center justify-center mx-auto mb-4">
+              <AlertTriangle className="w-7 h-7 text-red-600" />
+            </div>
+
+            <h2 className="text-xl font-display font-bold text-slate-900 text-center mb-2">
+              Excluir Cronograma
+            </h2>
+
+            <p className="text-slate-600 text-center mb-6">
+              Tem certeza que deseja excluir o cronograma <strong>"{schedule.name}"</strong>?
+              Esta ação é <strong>irreversível</strong> e todos os dados associados serão permanentemente excluídos.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="btn-secondary flex-1"
+                disabled={isDeleting}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={onConfirm}
+                className="btn-danger flex-1"
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Excluindo...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Excluir
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

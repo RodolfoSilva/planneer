@@ -406,8 +406,11 @@ export class ChatService {
         projectId
       );
 
-      // Get initial message
-      const initialMessage = await this.getInitialMessage(projectType);
+      // Get initial message (pass projectDescription so it can be acknowledged)
+      const initialMessage = await this.getInitialMessage(
+        projectType,
+        projectDescription
+      );
       console.log(
         "[ChatService] Initial message generated:",
         initialMessage.substring(0, 50) + "..."
@@ -891,11 +894,29 @@ export class ChatService {
     return scheduleId;
   }
 
-  async getInitialMessage(projectType?: string): Promise<string> {
+  async getInitialMessage(
+    projectType?: string,
+    projectDescription?: string
+  ): Promise<string> {
     const typeLabel = projectType
       ? PROJECT_TYPE_LABELS[projectType as keyof typeof PROJECT_TYPE_LABELS]
       : null;
 
+    // If we have a project description, acknowledge it and ask for complementary info
+    if (projectDescription) {
+      const shortDescription =
+        projectDescription.length > 150
+          ? projectDescription.substring(0, 147) + "..."
+          : projectDescription;
+
+      if (typeLabel) {
+        return `Olá! Vou ajudá-lo a criar um cronograma para seu projeto de **${typeLabel}**.\n\nVi que você descreveu o projeto como: "${shortDescription}"\n\nÓtimo! Para criar um cronograma completo, preciso de algumas informações complementares:\n- Qual a data de início desejada?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes que devemos considerar?`;
+      }
+
+      return `Olá! Sou o assistente de planejamento do Planneer. Vou ajudá-lo a criar um cronograma completo para seu projeto.\n\nVi que você descreveu o projeto como: "${shortDescription}"\n\nÓtimo! Para criar um cronograma completo, preciso de algumas informações complementares:\n- Qual a data de início desejada?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes?`;
+    }
+
+    // No description provided - ask for it
     if (typeLabel) {
       return `Olá! Vou ajudá-lo a criar um cronograma para seu projeto de **${typeLabel}**.\n\nPara começar, poderia me descrever brevemente o escopo do projeto? Por exemplo:\n- Qual é o objetivo principal?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes?`;
     }
@@ -920,6 +941,27 @@ export class ChatService {
         role: m.role as "user" | "assistant" | "system",
         content: m.content,
       })) || [];
+
+    // If this is the first user message and we have a project description,
+    // include it as context in the conversation
+    const projectDescription =
+      (context.collectedInfo?.projectDescription as string) ||
+      context.projectDescription;
+
+    // Check if this is likely the first exchange (only initial assistant message exists)
+    const isFirstExchange =
+      history.length === 1 &&
+      history[0].role === "assistant" &&
+      projectDescription;
+
+    if (isFirstExchange && projectDescription) {
+      // Prepend a system message with the project description to provide context
+      // This helps the LLM understand the project without asking the user to repeat
+      history.unshift({
+        role: "system",
+        content: `O usuário forneceu a seguinte descrição inicial do projeto: "${projectDescription}". Use esta descrição como contexto base e não peça ao usuário para descrever o projeto novamente. Faça perguntas complementares para refinar detalhes.`,
+      });
+    }
 
     // Search for similar templates using RAG
     let similarTemplates: string[] = context.similarTemplateIds || [];
@@ -1011,6 +1053,34 @@ export class ChatService {
                 "[ChatService] update_project_info function called, updated info:",
                 Object.keys(info)
               );
+
+              // If projectDescription was updated, also update it in the database
+              if (info.projectDescription && session.id) {
+                const sessionData = await db.query.chatSessions.findFirst({
+                  where: eq(chatSessions.id, session.id),
+                });
+
+                if (sessionData?.projectId) {
+                  try {
+                    await db
+                      .update(projects)
+                      .set({
+                        description: info.projectDescription as string,
+                        updatedAt: new Date(),
+                      })
+                      .where(eq(projects.id, sessionData.projectId));
+                    console.log(
+                      "[ChatService] Updated project description in database"
+                    );
+                  } catch (error) {
+                    console.error(
+                      "[ChatService] Error updating project description:",
+                      error
+                    );
+                    // Don't throw - this is a nice-to-have update
+                  }
+                }
+              }
             }
             break;
         }
@@ -1029,6 +1099,34 @@ export class ChatService {
         ...extractedInfo,
       },
     };
+
+    // If projectDescription was extracted and we have a session, update it in the database
+    if (extractedInfo.projectDescription && session.id) {
+      const sessionData = await db.query.chatSessions.findFirst({
+        where: eq(chatSessions.id, session.id),
+      });
+
+      if (sessionData?.projectId) {
+        try {
+          await db
+            .update(projects)
+            .set({
+              description: extractedInfo.projectDescription as string,
+              updatedAt: new Date(),
+            })
+            .where(eq(projects.id, sessionData.projectId));
+          console.log(
+            "[ChatService] Updated project description from extracted info"
+          );
+        } catch (error) {
+          console.error(
+            "[ChatService] Error updating project description from extracted info:",
+            error
+          );
+          // Don't throw - this is a nice-to-have update
+        }
+      }
+    }
 
     // If we have enough info but haven't triggered generation yet, check if we should ask for confirmation
     if (
@@ -1237,6 +1335,11 @@ Gere uma resposta breve e natural em português brasileiro reconhecendo a mensag
     context: ChatSessionContext,
     similarTemplateIds: string[]
   ): string {
+    // Get project description from context (prioritize collectedInfo, then context.projectDescription)
+    const projectDescription =
+      (context.collectedInfo?.projectDescription as string) ||
+      context.projectDescription;
+
     let prompt = `Você é um assistente especializado em planejamento de projetos. Seu objetivo é coletar informações necessárias para gerar um cronograma completo.
 
 REGRAS:
@@ -1245,13 +1348,34 @@ REGRAS:
 3. Use linguagem em português brasileiro
 4. Quando tiver informações suficientes, pergunte se o usuário deseja gerar o cronograma
 5. IMPORTANTE: Este sistema exporta cronogramas APENAS no formato .xer (Primavera P6). NUNCA sugira exportação em PDF, Excel, CSV ou outros formatos. Sempre mencione que o cronograma será exportado em formato .xer para importação no Primavera P6.
+6. IMPORTANTE: O usuário já forneceu uma descrição inicial do projeto. Use essa descrição como base e não peça para o usuário descrever novamente. Em vez disso, faça perguntas complementares para refinar e completar as informações necessárias.
 
-INFORMAÇÕES COLETADAS:
+${
+  projectDescription
+    ? `DESCRIÇÃO INICIAL DO PROJETO (fornecida pelo usuário):
+"${projectDescription}"
+
+Use esta descrição como contexto base. Não peça ao usuário para descrever o projeto novamente. Faça perguntas complementares para refinar detalhes como:
+- Data de início
+- Duração estimada
+- Marcos importantes
+- Recursos necessários
+- Restrições específicas
+
+`
+    : ""
+}INFORMAÇÕES COLETADAS:
 ${JSON.stringify(context.collectedInfo || {}, null, 2)}
 
 INFORMAÇÕES NECESSÁRIAS:
 - Tipo de projeto: ${context.projectType || "não informado"}
-- Descrição do escopo
+${
+  projectDescription
+    ? `- Descrição do escopo: ${projectDescription.substring(0, 200)}${
+        projectDescription.length > 200 ? "..." : ""
+      }`
+    : "- Descrição do escopo"
+}
 - Data de início desejada
 - Marcos importantes
 - Recursos disponíveis (opcional)

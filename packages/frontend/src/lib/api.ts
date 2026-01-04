@@ -128,6 +128,40 @@ export const schedules = {
     apiRequest<{ success: boolean; data: { deleted: boolean } }>(`/api/schedules/${id}`, { method: 'DELETE' }),
 };
 
+// Activities
+export const activities = {
+  update: (id: string, data: Partial<{
+    name: string;
+    description: string;
+    code: string;
+    duration: number;
+    durationUnit: 'hours' | 'days' | 'weeks' | 'months';
+    startDate: string | null;
+    endDate: string | null;
+    actualStart: string | null;
+    actualEnd: string | null;
+    percentComplete: number;
+    activityType: 'task' | 'milestone' | 'summary' | 'start_milestone' | 'finish_milestone';
+    wbsId: string | null;
+  }>) =>
+    apiRequest<{ success: boolean; data: any }>(`/api/activities/${id}`, { method: 'PATCH', body: data }),
+};
+
+// WBS
+export const wbs = {
+  list: (scheduleId: string) =>
+    apiRequest<{ success: boolean; data: any[] }>(`/api/wbs/schedule/${scheduleId}`),
+  
+  create: (data: { scheduleId: string; parentId?: string; code: string; name: string }) =>
+    apiRequest<{ success: boolean; data: any }>('/api/wbs', { method: 'POST', body: data }),
+  
+  update: (id: string, data: Partial<{ code: string; name: string; parentId: string | null; sortOrder: number }>) =>
+    apiRequest<{ success: boolean; data: any }>(`/api/wbs/${id}`, { method: 'PATCH', body: data }),
+  
+  delete: (id: string) =>
+    apiRequest<{ success: boolean; data: { deleted: boolean } }>(`/api/wbs/${id}`, { method: 'DELETE' }),
+};
+
 // Templates
 export const templates = {
   list: (type?: string) =>
@@ -137,6 +171,9 @@ export const templates = {
   
   get: (id: string) =>
     apiRequest<{ success: boolean; data: any }>(`/api/templates/${id}`),
+  
+  getActivities: (id: string) =>
+    apiRequest<{ success: boolean; data: { items: any[]; total: number } }>(`/api/templates/${id}/activities`),
   
   upload: async (file: File, organizationId: string, metadata?: { name?: string; description?: string; type?: string }) => {
     const formData = new FormData();

@@ -2,7 +2,7 @@ import { Elysia, t } from "elysia";
 import { nanoid } from "nanoid";
 import { eq, desc, ilike, and, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { projectTemplates, templateEmbeddings } from "../db/schema";
+import { projectTemplates, templateEmbeddings, templateActivities } from "../db/schema";
 import { auth } from "../auth";
 import {
   NotFoundError,
@@ -295,6 +295,62 @@ export const templateRoutes = new Elysia({ prefix: "/api/templates" })
         .where(eq(projectTemplates.id, params.id));
 
       return { success: true, data: { deleted: true } };
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+    }
+  )
+  .get(
+    "/:id/activities",
+    async ({ params, request }) => {
+      const user = await getAuthUser(request);
+      const template = await db.query.projectTemplates.findFirst({
+        where: eq(projectTemplates.id, params.id),
+      });
+
+      if (!template) {
+        throw new NotFoundError("Template", params.id);
+      }
+
+      const userOrgs = await getUserOrganizations(user.id);
+      const hasAccess = userOrgs.some(
+        (o) => o.organizationId === template.organizationId
+      );
+
+      if (!hasAccess) {
+        throw new ForbiddenError("You do not have access to this template");
+      }
+
+      // Try to get activities from templateActivities table first
+      const dbActivities = await db.query.templateActivities.findMany({
+        where: eq(templateActivities.templateId, params.id),
+        orderBy: [templateActivities.code],
+      });
+
+      // If activities exist in the table, return them
+      if (dbActivities.length > 0) {
+        return {
+          success: true,
+          data: {
+            items: dbActivities,
+            total: dbActivities.length,
+          },
+        };
+      }
+
+      // Otherwise, get activities from metadata
+      const metadata = template.metadata as any;
+      const activities = metadata?.activities || [];
+
+      return {
+        success: true,
+        data: {
+          items: activities,
+          total: activities.length,
+        },
+      };
     },
     {
       params: t.Object({

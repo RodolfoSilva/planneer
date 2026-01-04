@@ -8,16 +8,19 @@ import {
   FileText,
   Loader2,
   AlertCircle,
-  Building2
+  Building2,
+  Eye
 } from 'lucide-react';
 import { templates } from '@/lib/api';
 import { formatDate, cn } from '@/lib/utils';
 import { PROJECT_TYPE_LABELS } from '@planneer/shared';
 import { useOrganization } from '@/hooks/useOrganization';
+import { TemplateActivitiesModal } from '@/components/TemplateActivitiesModal';
 
 export function Templates() {
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<{ id: string; name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   

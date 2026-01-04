@@ -5,6 +5,8 @@ import { authRoutes } from "./routes/auth";
 import { organizationRoutes } from "./routes/organizations";
 import { projectRoutes } from "./routes/projects";
 import { scheduleRoutes } from "./routes/schedules";
+import { activityRoutes } from "./routes/activities";
+import { wbsRoutes } from "./routes/wbs";
 import { templateRoutes } from "./routes/templates";
 import { chatRoutes } from "./routes/chat";
 import { healthRoutes } from "./routes/health";
@@ -44,6 +46,8 @@ const app = new Elysia()
   .use(organizationRoutes)
   .use(projectRoutes)
   .use(scheduleRoutes)
+  .use(activityRoutes)
+  .use(wbsRoutes)
   .use(templateRoutes)
   .use(chatRoutes)
   .use(websocketRoutes)

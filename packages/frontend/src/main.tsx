@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createRouter } from '@tanstack/react-router';
 import { routeTree } from './routes';
 import { OrganizationProvider } from './contexts/OrganizationContext';
+import { ToastProvider } from './contexts/ToastContext';
 import './styles/globals.css';
 
 const queryClient = new QueryClient({
@@ -33,7 +34,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <OrganizationProvider>
-        <RouterProvider router={router} />
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
       </OrganizationProvider>
     </QueryClientProvider>
   </React.StrictMode>
