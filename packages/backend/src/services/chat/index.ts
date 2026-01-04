@@ -41,7 +41,9 @@ export class ChatService {
    * Check if there's a pending user message that needs to be processed
    * Returns the last user message if it hasn't been responded to
    */
-  async checkPendingMessage(sessionId: string): Promise<{ id: string; content: string } | null> {
+  async checkPendingMessage(
+    sessionId: string
+  ): Promise<{ id: string; content: string } | null> {
     const session = await db.query.chatSessions.findFirst({
       where: eq(chatSessions.id, sessionId),
       with: {
@@ -78,7 +80,11 @@ export class ChatService {
    * Process an existing user message that hasn't been responded to
    * This is used when recovering from server restarts
    */
-  async processExistingMessage(sessionId: string, userMessageId: string, userMessageContent: string): Promise<void> {
+  async processExistingMessage(
+    sessionId: string,
+    userMessageId: string,
+    userMessageContent: string
+  ): Promise<void> {
     console.log("[ChatService] Processing existing message:", userMessageId);
 
     const session = await db.query.chatSessions.findFirst({
@@ -96,7 +102,9 @@ export class ChatService {
     }
 
     // Check if this message already has a response
-    const messageIndex = session.messages.findIndex(m => m.id === userMessageId);
+    const messageIndex = session.messages.findIndex(
+      (m) => m.id === userMessageId
+    );
     if (messageIndex === -1) {
       console.error("[ChatService] Message not found:", userMessageId);
       return;
@@ -104,8 +112,8 @@ export class ChatService {
 
     // Check if there's already a response after this message
     const messagesAfter = session.messages.slice(messageIndex + 1);
-    const hasResponse = messagesAfter.some(m => m.role === "assistant");
-    
+    const hasResponse = messagesAfter.some((m) => m.role === "assistant");
+
     if (hasResponse) {
       console.log("[ChatService] Message already has a response, skipping");
       return;
@@ -116,7 +124,7 @@ export class ChatService {
     try {
       // Get all messages up to (but not including) the pending one
       const messagesUpToPending = session.messages.slice(0, messageIndex);
-      
+
       result = await this.processMessage(
         {
           id: session.id,
@@ -125,8 +133,14 @@ export class ChatService {
         },
         userMessageContent
       );
-      console.log("[ChatService] Message processed, response length:", result.response.length);
-      console.log("[ChatService] shouldGenerateSchedule:", result.shouldGenerateSchedule);
+      console.log(
+        "[ChatService] Message processed, response length:",
+        result.response.length
+      );
+      console.log(
+        "[ChatService] shouldGenerateSchedule:",
+        result.shouldGenerateSchedule
+      );
     } catch (error) {
       console.error("[ChatService] Error processing message:", error);
       throw error;
@@ -142,7 +156,10 @@ export class ChatService {
         content: result.response,
         createdAt: new Date(),
       });
-      console.log("[ChatService] Assistant message stored:", assistantMessageId);
+      console.log(
+        "[ChatService] Assistant message stored:",
+        assistantMessageId
+      );
     } catch (error) {
       console.error("[ChatService] Error storing assistant message:", error);
       throw error;
@@ -160,43 +177,69 @@ export class ChatService {
     // If schedule should be generated, generate it automatically
     if (result.shouldGenerateSchedule) {
       console.log("=".repeat(80));
-      console.log("[ChatService.processExistingMessage] ⚡ shouldGenerateSchedule is TRUE - Starting automatic generation");
-      console.log("[ChatService.processExistingMessage] Session ID:", sessionId);
-      console.log("[ChatService.processExistingMessage] User message:", userMessageContent.substring(0, 100));
+      console.log(
+        "[ChatService.processExistingMessage] ⚡ shouldGenerateSchedule is TRUE - Starting automatic generation"
+      );
+      console.log(
+        "[ChatService.processExistingMessage] Session ID:",
+        sessionId
+      );
+      console.log(
+        "[ChatService.processExistingMessage] User message:",
+        userMessageContent.substring(0, 100)
+      );
       console.log("=".repeat(80));
-      
+
       try {
-        console.log("[ChatService.processExistingMessage] Step 1: Calling generateSchedule()...");
+        console.log(
+          "[ChatService.processExistingMessage] Step 1: Calling generateSchedule()..."
+        );
         const generatedScheduleId = await this.generateSchedule(sessionId);
-        console.log("[ChatService.processExistingMessage] ✅ Step 1: Schedule generated successfully!");
-        console.log("[ChatService.processExistingMessage] Generated Schedule ID:", generatedScheduleId);
-        
+        console.log(
+          "[ChatService.processExistingMessage] ✅ Step 1: Schedule generated successfully!"
+        );
+        console.log(
+          "[ChatService.processExistingMessage] Generated Schedule ID:",
+          generatedScheduleId
+        );
+
         // Verify the schedule was created and has xerFileKey
         const createdSchedule = await db.query.schedules.findFirst({
           where: eq(schedules.id, generatedScheduleId),
         });
-        
+
         if (createdSchedule) {
-          console.log("[ChatService.processExistingMessage] Step 2: Verifying schedule creation...");
+          console.log(
+            "[ChatService.processExistingMessage] Step 2: Verifying schedule creation..."
+          );
           console.log("[ChatService.processExistingMessage] Schedule found:", {
             id: createdSchedule.id,
             name: createdSchedule.name,
             xerFileKey: createdSchedule.xerFileKey || "NOT SET",
           });
-          
+
           if (createdSchedule.xerFileKey) {
-            console.log("[ChatService.processExistingMessage] ✅ Step 2: XER file key is set:", createdSchedule.xerFileKey);
+            console.log(
+              "[ChatService.processExistingMessage] ✅ Step 2: XER file key is set:",
+              createdSchedule.xerFileKey
+            );
           } else {
-            console.error("[ChatService.processExistingMessage] ❌ Step 2: XER file key is NOT set!");
+            console.error(
+              "[ChatService.processExistingMessage] ❌ Step 2: XER file key is NOT set!"
+            );
           }
         } else {
-          console.error("[ChatService.processExistingMessage] ❌ Step 2: Schedule not found after generation!");
+          console.error(
+            "[ChatService.processExistingMessage] ❌ Step 2: Schedule not found after generation!"
+          );
         }
-        
+
         // Add a message informing the user that the schedule was generated
         const scheduleGeneratedMessage = `✅ Cronograma gerado com sucesso! O arquivo .xer foi criado e está disponível para download na página do cronograma.`;
-        
-        console.log("[ChatService.processExistingMessage] Step 3: Adding success message to chat...");
+
+        console.log(
+          "[ChatService.processExistingMessage] Step 3: Adding success message to chat..."
+        );
         await db.insert(chatMessages).values({
           id: nanoid(),
           sessionId,
@@ -204,20 +247,29 @@ export class ChatService {
           content: scheduleGeneratedMessage,
           createdAt: new Date(),
         });
-        console.log("[ChatService.processExistingMessage] ✅ Step 3: Success message added");
+        console.log(
+          "[ChatService.processExistingMessage] ✅ Step 3: Success message added"
+        );
         console.log("=".repeat(80));
-        
       } catch (error) {
         console.error("=".repeat(80));
-        console.error("[ChatService.processExistingMessage] ❌ ERROR during automatic schedule generation:");
-        console.error("[ChatService.processExistingMessage] Error type:", error instanceof Error ? error.constructor.name : typeof error);
-        console.error("[ChatService.processExistingMessage] Error message:", error instanceof Error ? error.message : String(error));
+        console.error(
+          "[ChatService.processExistingMessage] ❌ ERROR during automatic schedule generation:"
+        );
+        console.error(
+          "[ChatService.processExistingMessage] Error type:",
+          error instanceof Error ? error.constructor.name : typeof error
+        );
+        console.error(
+          "[ChatService.processExistingMessage] Error message:",
+          error instanceof Error ? error.message : String(error)
+        );
         if (error instanceof Error && error.stack) {
           console.error("[ChatService.processExistingMessage] Stack trace:");
           console.error(error.stack);
         }
         console.error("=".repeat(80));
-        
+
         // Add error message to chat
         const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
         await db.insert(chatMessages).values({
@@ -229,7 +281,9 @@ export class ChatService {
         });
       }
     } else {
-      console.log("[ChatService.processExistingMessage] shouldGenerateSchedule is FALSE - No automatic generation");
+      console.log(
+        "[ChatService.processExistingMessage] shouldGenerateSchedule is FALSE - No automatic generation"
+      );
     }
 
     console.log("[ChatService] Existing message processed successfully");
@@ -242,11 +296,18 @@ export class ChatService {
   async processPendingMessage(sessionId: string): Promise<void> {
     try {
       const pendingMessage = await this.checkPendingMessage(sessionId);
-      
+
       if (pendingMessage) {
-        console.log("[ChatService] Found pending message, processing:", pendingMessage.id);
+        console.log(
+          "[ChatService] Found pending message, processing:",
+          pendingMessage.id
+        );
         // Process the existing message (this will add the assistant response)
-        await this.processExistingMessage(sessionId, pendingMessage.id, pendingMessage.content);
+        await this.processExistingMessage(
+          sessionId,
+          pendingMessage.id,
+          pendingMessage.content
+        );
         console.log("[ChatService] Pending message processed successfully");
       }
     } catch (error) {
@@ -262,15 +323,21 @@ export class ChatService {
   async startSession(options: StartSessionOptions) {
     const { userId, organizationId, projectType, projectDescription } = options;
 
-    console.log("[ChatService] Starting session:", { userId, organizationId, projectType, projectDescription });
+    console.log("[ChatService] Starting session:", {
+      userId,
+      organizationId,
+      projectType,
+      projectDescription,
+    });
 
     const id = nanoid();
     const now = new Date();
 
     // Generate project name from description (first 50 chars or a default name)
-    const projectName = projectDescription.length > 50
-      ? projectDescription.substring(0, 47) + "..."
-      : projectDescription || "Novo Projeto";
+    const projectName =
+      projectDescription.length > 50
+        ? projectDescription.substring(0, 47) + "..."
+        : projectDescription || "Novo Projeto";
 
     // Create project first
     const projectId = nanoid();
@@ -287,19 +354,27 @@ export class ChatService {
         updatedAt: now,
       });
       console.log("[ChatService] Project created:", projectId);
-      
+
       // Verify project was created
       createdProject = await db.query.projects.findFirst({
         where: eq(projects.id, projectId),
       });
-      
+
       if (!createdProject) {
         throw new Error("Project was not created successfully");
       }
-      console.log("[ChatService] Project verified:", createdProject.id, createdProject.name);
+      console.log(
+        "[ChatService] Project verified:",
+        createdProject.id,
+        createdProject.name
+      );
     } catch (error) {
       console.error("[ChatService] Error creating project:", error);
-      throw new Error(`Failed to create project: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Failed to create project: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
 
     const initialContext: ChatSessionContext = {
@@ -324,11 +399,19 @@ export class ChatService {
         updatedAt: now,
       });
 
-      console.log("[ChatService] Session created:", id, "with projectId:", projectId);
+      console.log(
+        "[ChatService] Session created:",
+        id,
+        "with projectId:",
+        projectId
+      );
 
       // Get initial message
       const initialMessage = await this.getInitialMessage(projectType);
-      console.log("[ChatService] Initial message generated:", initialMessage.substring(0, 50) + "...");
+      console.log(
+        "[ChatService] Initial message generated:",
+        initialMessage.substring(0, 50) + "..."
+      );
 
       // Store initial assistant message
       await db.insert(chatMessages).values({
@@ -345,7 +428,9 @@ export class ChatService {
       // If session creation fails, try to clean up the project
       try {
         await db.delete(projects).where(eq(projects.id, projectId));
-        console.log("[ChatService] Cleaned up project after session creation failure");
+        console.log(
+          "[ChatService] Cleaned up project after session creation failure"
+        );
       } catch (cleanupError) {
         console.error("[ChatService] Error cleaning up project:", cleanupError);
       }
@@ -364,7 +449,10 @@ export class ChatService {
       throw new Error("Session was not created successfully");
     }
 
-    console.log("[ChatService] Session returned with projectId:", session.projectId);
+    console.log(
+      "[ChatService] Session returned with projectId:",
+      session.projectId
+    );
     return session;
   }
 
@@ -378,7 +466,10 @@ export class ChatService {
   }) {
     const { userId, projectId } = options;
 
-    console.log("[ChatService] Getting or creating session for project:", projectId);
+    console.log(
+      "[ChatService] Getting or creating session for project:",
+      projectId
+    );
 
     // First, verify the project exists and get its details
     const project = await db.query.projects.findFirst({
@@ -391,7 +482,7 @@ export class ChatService {
 
     // Check if user has access to the project's organization
     // (This should be verified at the route level, but we check here too)
-    
+
     // Look for an existing active session for this project
     // Get all sessions for this project and user, then find the most recent active one
     const allSessions = await db.query.chatSessions.findMany({
@@ -405,14 +496,17 @@ export class ChatService {
 
     // Filter for active sessions by this user and get the most recent
     const activeSessions = allSessions
-      .filter(s => s.status === "active" && s.userId === userId)
+      .filter((s) => s.status === "active" && s.userId === userId)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-    
+
     const existingSession = activeSessions[0] || null;
 
     // If there's an active session, return it with properly ordered messages
     if (existingSession) {
-      console.log("[ChatService] Found existing active session:", existingSession.id);
+      console.log(
+        "[ChatService] Found existing active session:",
+        existingSession.id
+      );
       // Fetch the session again with messages ordered correctly
       const sessionWithMessages = await db.query.chatSessions.findFirst({
         where: eq(chatSessions.id, existingSession.id),
@@ -442,7 +536,10 @@ export class ChatService {
     };
 
     // Get initial message for existing project
-    const initialMessage = await this.getInitialMessageForExistingProject(project.name, project.type || undefined);
+    const initialMessage = await this.getInitialMessageForExistingProject(
+      project.name,
+      project.type || undefined
+    );
 
     try {
       await db.insert(chatSessions).values({
@@ -465,9 +562,15 @@ export class ChatService {
         createdAt: now,
       });
 
-      console.log("[ChatService] New session created for existing project:", id);
+      console.log(
+        "[ChatService] New session created for existing project:",
+        id
+      );
     } catch (error) {
-      console.error("[ChatService] Error creating session for existing project:", error);
+      console.error(
+        "[ChatService] Error creating session for existing project:",
+        error
+      );
       throw error;
     }
 
@@ -489,7 +592,10 @@ export class ChatService {
   /**
    * Get initial message for an existing project
    */
-  async getInitialMessageForExistingProject(projectName: string, projectType?: string): Promise<string> {
+  async getInitialMessageForExistingProject(
+    projectName: string,
+    projectType?: string
+  ): Promise<string> {
     const typeLabel = projectType
       ? PROJECT_TYPE_LABELS[projectType as keyof typeof PROJECT_TYPE_LABELS]
       : null;
@@ -505,7 +611,12 @@ export class ChatService {
    * Send a message to a chat session and get AI response
    */
   async sendMessage(sessionId: string, content: string) {
-    console.log("[ChatService] Sending message to session:", sessionId, "Content:", content.substring(0, 50) + "...");
+    console.log(
+      "[ChatService] Sending message to session:",
+      sessionId,
+      "Content:",
+      content.substring(0, 50) + "..."
+    );
 
     const session = await db.query.chatSessions.findFirst({
       where: eq(chatSessions.id, sessionId),
@@ -521,7 +632,10 @@ export class ChatService {
       throw new Error("Session not found");
     }
 
-    console.log("[ChatService] Session found, message count:", session.messages.length);
+    console.log(
+      "[ChatService] Session found, message count:",
+      session.messages.length
+    );
 
     const now = new Date();
 
@@ -552,7 +666,10 @@ export class ChatService {
         },
         content
       );
-      console.log("[ChatService] Message processed, response length:", result.response.length);
+      console.log(
+        "[ChatService] Message processed, response length:",
+        result.response.length
+      );
     } catch (error) {
       console.error("[ChatService] Error processing message:", error);
       throw error;
@@ -568,7 +685,10 @@ export class ChatService {
         content: result.response,
         createdAt: new Date(),
       });
-      console.log("[ChatService] Assistant message stored:", assistantMessageId);
+      console.log(
+        "[ChatService] Assistant message stored:",
+        assistantMessageId
+      );
     } catch (error) {
       console.error("[ChatService] Error storing assistant message:", error);
       throw error;
@@ -587,22 +707,29 @@ export class ChatService {
     let generatedScheduleId: string | undefined;
     if (result.shouldGenerateSchedule) {
       console.log("=".repeat(80));
-      console.log("[ChatService] ⚡ shouldGenerateSchedule is TRUE - Starting automatic generation");
+      console.log(
+        "[ChatService] ⚡ shouldGenerateSchedule is TRUE - Starting automatic generation"
+      );
       console.log("[ChatService] Session ID:", sessionId);
       console.log("[ChatService] User message:", content.substring(0, 100));
       console.log("=".repeat(80));
-      
+
       try {
         console.log("[ChatService] Step 1: Calling generateSchedule()...");
         generatedScheduleId = await this.generateSchedule(sessionId);
-        console.log("[ChatService] ✅ Step 1: Schedule generated successfully!");
-        console.log("[ChatService] Generated Schedule ID:", generatedScheduleId);
-        
+        console.log(
+          "[ChatService] ✅ Step 1: Schedule generated successfully!"
+        );
+        console.log(
+          "[ChatService] Generated Schedule ID:",
+          generatedScheduleId
+        );
+
         // Verify the schedule was created and has xerFileKey
         const createdSchedule = await db.query.schedules.findFirst({
           where: eq(schedules.id, generatedScheduleId),
         });
-        
+
         if (createdSchedule) {
           console.log("[ChatService] Step 2: Verifying schedule creation...");
           console.log("[ChatService] Schedule found:", {
@@ -610,19 +737,24 @@ export class ChatService {
             name: createdSchedule.name,
             xerFileKey: createdSchedule.xerFileKey || "NOT SET",
           });
-          
+
           if (createdSchedule.xerFileKey) {
-            console.log("[ChatService] ✅ Step 2: XER file key is set:", createdSchedule.xerFileKey);
+            console.log(
+              "[ChatService] ✅ Step 2: XER file key is set:",
+              createdSchedule.xerFileKey
+            );
           } else {
             console.error("[ChatService] ❌ Step 2: XER file key is NOT set!");
           }
         } else {
-          console.error("[ChatService] ❌ Step 2: Schedule not found after generation!");
+          console.error(
+            "[ChatService] ❌ Step 2: Schedule not found after generation!"
+          );
         }
-        
+
         // Add a message informing the user that the schedule was generated
         const scheduleGeneratedMessage = `✅ Cronograma gerado com sucesso! O arquivo .xer foi criado e está disponível para download na página do cronograma.`;
-        
+
         console.log("[ChatService] Step 3: Adding success message to chat...");
         await db.insert(chatMessages).values({
           id: nanoid(),
@@ -633,18 +765,25 @@ export class ChatService {
         });
         console.log("[ChatService] ✅ Step 3: Success message added");
         console.log("=".repeat(80));
-        
       } catch (error) {
         console.error("=".repeat(80));
-        console.error("[ChatService] ❌ ERROR during automatic schedule generation:");
-        console.error("[ChatService] Error type:", error instanceof Error ? error.constructor.name : typeof error);
-        console.error("[ChatService] Error message:", error instanceof Error ? error.message : String(error));
+        console.error(
+          "[ChatService] ❌ ERROR during automatic schedule generation:"
+        );
+        console.error(
+          "[ChatService] Error type:",
+          error instanceof Error ? error.constructor.name : typeof error
+        );
+        console.error(
+          "[ChatService] Error message:",
+          error instanceof Error ? error.message : String(error)
+        );
         if (error instanceof Error && error.stack) {
           console.error("[ChatService] Stack trace:");
           console.error(error.stack);
         }
         console.error("=".repeat(80));
-        
+
         // Don't throw - we still want to return the assistant message
         // Add error message to chat
         const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
@@ -657,7 +796,9 @@ export class ChatService {
         });
       }
     } else {
-      console.log("[ChatService] shouldGenerateSchedule is FALSE - No automatic generation");
+      console.log(
+        "[ChatService] shouldGenerateSchedule is FALSE - No automatic generation"
+      );
     }
 
     return {
@@ -682,14 +823,20 @@ export class ChatService {
    * Generate a schedule from a chat session
    */
   async generateSchedule(sessionId: string) {
-    console.log("[ChatService.generateSchedule] Starting schedule generation for session:", sessionId);
-    
+    console.log(
+      "[ChatService.generateSchedule] Starting schedule generation for session:",
+      sessionId
+    );
+
     const session = await db.query.chatSessions.findFirst({
       where: eq(chatSessions.id, sessionId),
     });
 
     if (!session) {
-      console.error("[ChatService.generateSchedule] Session not found:", sessionId);
+      console.error(
+        "[ChatService.generateSchedule] Session not found:",
+        sessionId
+      );
       throw new Error("Session not found");
     }
 
@@ -707,7 +854,9 @@ export class ChatService {
       collectedInfoKeys: Object.keys(context.collectedInfo || {}),
     });
 
-    console.log("[ChatService.generateSchedule] Calling generateScheduleFromContext...");
+    console.log(
+      "[ChatService.generateSchedule] Calling generateScheduleFromContext..."
+    );
     const scheduleId = await this.generateScheduleFromContext(
       {
         id: session.id,
@@ -716,8 +865,11 @@ export class ChatService {
       },
       context
     );
-    
-    console.log("[ChatService.generateSchedule] Schedule generation completed, ID:", scheduleId);
+
+    console.log(
+      "[ChatService.generateSchedule] Schedule generation completed, ID:",
+      scheduleId
+    );
     return scheduleId;
   }
 
@@ -765,13 +917,29 @@ export class ChatService {
     const systemPrompt = this.buildSystemPrompt(context, similarTemplates);
 
     // Get LLM response
-    const response = await llm.chat([
+    const originalResponse = await llm.chat([
       { role: "system", content: systemPrompt },
       ...history,
       { role: "user", content: userMessage },
     ]);
-    
-    console.log("[ChatService] LLM response received, length:", response.length);
+
+    console.log(
+      "[ChatService] LLM response received, length:",
+      originalResponse.length
+    );
+
+    // Check for generation markers in original response (before removing them)
+    const hasGenerationMarker =
+      originalResponse.includes("[GERAR]") ||
+      originalResponse.includes("[generate]") ||
+      originalResponse.includes("[GENERATE]");
+
+    // Remove generation markers from response before showing to user
+    let response = originalResponse
+      .replace(/\[GERAR\]/gi, "")
+      .replace(/\[generate\]/gi, "")
+      .replace(/\[GENERATE\]/gi, "")
+      .trim();
 
     // Extract information from user message
     const extractedInfo = await this.extractProjectInfo(userMessage, context);
@@ -788,39 +956,110 @@ export class ChatService {
 
     // Check if we have enough information to generate
     if (this.hasEnoughInfoToGenerate(updatedContext)) {
-      // Ask for confirmation before generating
-      if (!context.currentStep?.includes("confirm")) {
-        updatedContext.currentStep = "confirm_generation";
-      } else {
-        // Check for confirmation keywords (more comprehensive)
-        const lowerMessage = userMessage.toLowerCase().trim();
-        const confirmationKeywords = [
-          "sim", "ok", "pode", "pode gerar", "gerar", "criar", "vamos", 
-          "vamos lá", "pode criar", "pode gerar", "gerar agora", "criar agora",
-          "confirmo", "confirmado", "está bom", "está ok", "tudo certo",
-          "prossiga", "continue", "faça", "faça isso", "pode fazer"
-        ];
-        
-        const isConfirmation = confirmationKeywords.some(keyword => 
-          lowerMessage.includes(keyword)
+      // Check for explicit generation requests first (before asking for confirmation)
+      const lowerMessage = userMessage.toLowerCase().trim();
+      const explicitGenerationKeywords = [
+        "gerar",
+        "criar",
+        "gerar agora",
+        "criar agora",
+        "gerar o cronograma",
+        "criar o cronograma",
+        "gerar projeto",
+        "criar projeto",
+        "gerar arquivo",
+        "criar arquivo",
+        "gerar .xer",
+        "criar .xer",
+        "gerar xer",
+        "criar xer",
+        "pode gerar",
+        "pode criar",
+        "vamos gerar",
+        "vamos criar",
+        "faça o cronograma",
+        "faça o projeto",
+        "faça o arquivo",
+      ];
+
+      const isExplicitGenerationRequest = explicitGenerationKeywords.some(
+        (keyword) => lowerMessage.includes(keyword)
+      );
+
+      // Check for confirmation keywords (more comprehensive)
+      const confirmationKeywords = [
+        "sim",
+        "ok",
+        "pode",
+        "vamos",
+        "vamos lá",
+        "confirmo",
+        "confirmado",
+        "está bom",
+        "está ok",
+        "tudo certo",
+        "prossiga",
+        "continue",
+        "faça",
+        "faça isso",
+        "pode fazer",
+        "pode prosseguir",
+        "pode continuar",
+        "está perfeito",
+        "está correto",
+        "concordo",
+        "de acordo",
+      ];
+
+      const isConfirmation = confirmationKeywords.some((keyword) =>
+        lowerMessage.includes(keyword)
+      );
+
+      // Check if the LLM response suggests generation
+      const responseLower = response.toLowerCase();
+
+      const responseSuggestsGeneration =
+        hasGenerationMarker ||
+        responseLower.includes("gerando") ||
+        responseLower.includes("vou gerar") ||
+        responseLower.includes("estou gerando") ||
+        responseLower.includes("gerar agora") ||
+        responseLower.includes("criando o cronograma") ||
+        responseLower.includes("gerando o cronograma") ||
+        responseLower.includes("criando o arquivo") ||
+        responseLower.includes("gerando o arquivo") ||
+        responseLower.includes("vou criar o cronograma") ||
+        responseLower.includes("vou criar o arquivo");
+
+      // If explicit generation request, generate immediately
+      if (isExplicitGenerationRequest) {
+        shouldGenerateSchedule = true;
+        updatedContext.currentStep = "generating";
+        console.log(
+          "[ChatService] Explicit generation request detected, will generate schedule:",
+          {
+            userMessage: lowerMessage.substring(0, 50),
+          }
         );
-        
-        // Also check if the LLM response suggests generation
-        const responseLower = response.toLowerCase();
-        const responseSuggestsGeneration = 
-          responseLower.includes("gerando") ||
-          responseLower.includes("vou gerar") ||
-          responseLower.includes("estou gerando") ||
-          responseLower.includes("gerar agora");
-        
+      }
+      // If we're in confirmation step and user confirms, generate
+      else if (context.currentStep?.includes("confirm")) {
         if (isConfirmation || responseSuggestsGeneration) {
           shouldGenerateSchedule = true;
-          console.log("[ChatService] Confirmation detected, will generate schedule:", {
-            isConfirmation,
-            responseSuggestsGeneration,
-            userMessage: lowerMessage.substring(0, 50)
-          });
+          updatedContext.currentStep = "generating";
+          console.log(
+            "[ChatService] Confirmation detected, will generate schedule:",
+            {
+              isConfirmation,
+              responseSuggestsGeneration,
+              userMessage: lowerMessage.substring(0, 50),
+            }
+          );
         }
+      }
+      // If we have enough info but haven't asked for confirmation yet, ask now
+      else {
+        updatedContext.currentStep = "confirm_generation";
       }
     }
 
@@ -863,13 +1102,15 @@ FORMATO DE EXPORTAÇÃO:
 - O arquivo .xer pode ser importado diretamente no Primavera P6
 
 IMPORTANTE SOBRE GERAÇÃO:
-- Quando o usuário confirmar a geração (dizendo "sim", "gerar", "criar"), o sistema irá:
+- Quando o usuário confirmar a geração (dizendo "sim", "gerar", "criar", "ok", "pode gerar"), o sistema irá:
   1. Gerar o cronograma completo automaticamente
   2. Criar o arquivo .xer automaticamente
   3. Disponibilizar o arquivo para download na página do cronograma
 - NUNCA gere ou mencione links de download na sua resposta - o sistema faz isso automaticamente
 - Apenas informe que o cronograma e o arquivo .xer foram gerados com sucesso
-- NÃO crie URLs, links ou caminhos de arquivo - isso é feito pelo sistema`;
+- NÃO crie URLs, links ou caminhos de arquivo - isso é feito pelo sistema
+- Quando você quiser que o sistema gere o cronograma, use a marcação [GERAR] no final da sua resposta
+- Se o usuário pedir explicitamente para gerar, criar ou fazer o cronograma/projeto/arquivo, você deve indicar que vai gerar usando [GERAR]`;
 
     if (similarTemplateIds.length > 0) {
       prompt += `\n\nTEMPLATES SIMILARES ENCONTRADOS: ${similarTemplateIds.length} projetos similares foram identificados e serão usados como referência.`;
@@ -939,9 +1180,12 @@ Retorne APENAS o JSON, sem explicações.`;
       projectId: session.projectId,
       userId: session.userId,
     });
-    
+
     const info = context.collectedInfo || {};
-    console.log("[ChatService.generateScheduleFromContext] Collected info:", Object.keys(info));
+    console.log(
+      "[ChatService.generateScheduleFromContext] Collected info:",
+      Object.keys(info)
+    );
 
     // Get project
     let projectId = session.projectId;
@@ -950,11 +1194,15 @@ Retorne APENAS o JSON, sem explicações.`;
       console.error("[ChatService.generateScheduleFromContext] No project ID!");
       throw new Error("Project ID is required. Please create a project first.");
     }
-    
-    console.log("[ChatService.generateScheduleFromContext] Project ID:", projectId);
+
+    console.log(
+      "[ChatService.generateScheduleFromContext] Project ID:",
+      projectId
+    );
 
     // Update project with final information if available
-    const finalDescription = (info.projectDescription as string) || context.projectDescription;
+    const finalDescription =
+      (info.projectDescription as string) || context.projectDescription;
     if (finalDescription) {
       await db
         .update(projects)
@@ -966,28 +1214,34 @@ Retorne APENAS o JSON, sem explicações.`;
     }
 
     // Generate schedule using the scheduler service
-    console.log("[ChatService.generateScheduleFromContext] Step 1: Generating schedule data...");
+    console.log(
+      "[ChatService.generateScheduleFromContext] Step 1: Generating schedule data..."
+    );
     const scheduleData = await scheduleGenerator.generate({
       projectType: context.projectType || "other",
       description:
-        (info.projectDescription as string) ||
-        context.projectDescription ||
-        "",
+        (info.projectDescription as string) || context.projectDescription || "",
       estimatedDuration: info.estimatedDuration as string,
       startDate: info.startDate as string,
       milestones: info.milestones as string[],
       similarTemplateIds: context.similarTemplateIds,
     });
-    console.log("[ChatService.generateScheduleFromContext] ✅ Step 1: Schedule data generated:", {
-      name: scheduleData.name,
-      activitiesCount: scheduleData.activities.length,
-      wbsCount: scheduleData.wbs.length,
-    });
+    console.log(
+      "[ChatService.generateScheduleFromContext] ✅ Step 1: Schedule data generated:",
+      {
+        name: scheduleData.name,
+        activitiesCount: scheduleData.activities.length,
+        wbsCount: scheduleData.wbs.length,
+      }
+    );
 
     // Create schedule in database
     const scheduleId = nanoid();
     const now = new Date();
-    console.log("[ChatService.generateScheduleFromContext] Step 2: Creating schedule in database, ID:", scheduleId);
+    console.log(
+      "[ChatService.generateScheduleFromContext] Step 2: Creating schedule in database, ID:",
+      scheduleId
+    );
 
     await db.insert(schedules).values({
       id: scheduleId,
@@ -1001,13 +1255,26 @@ Retorne APENAS o JSON, sem explicações.`;
       updatedAt: now,
     });
 
-    // Insert WBS
-    console.log("[ChatService.generateScheduleFromContext] Step 3: Inserting WBS items...");
+    // Insert WBS with ID mapping
+    console.log(
+      "[ChatService.generateScheduleFromContext] Step 3: Inserting WBS items..."
+    );
+    // Map temporary IDs from ScheduleGenerator to real database IDs
+    const wbsIdMap = new Map<string, string>();
+
     for (const wbsItem of scheduleData.wbs) {
+      const realId = nanoid();
+      wbsIdMap.set(wbsItem.id, realId);
+
+      // Map parentId to real ID if it exists
+      const realParentId = wbsItem.parentId
+        ? wbsIdMap.get(wbsItem.parentId) || null
+        : null;
+
       await db.insert(wbs).values({
-        id: nanoid(),
+        id: realId,
         scheduleId,
-        parentId: wbsItem.parentId,
+        parentId: realParentId,
         code: wbsItem.code,
         name: wbsItem.name,
         level: wbsItem.level,
@@ -1015,15 +1282,25 @@ Retorne APENAS o JSON, sem explicações.`;
         createdAt: now,
       });
     }
-    console.log("[ChatService.generateScheduleFromContext] ✅ Step 3: WBS items inserted:", scheduleData.wbs.length);
+    console.log(
+      "[ChatService.generateScheduleFromContext] ✅ Step 3: WBS items inserted:",
+      scheduleData.wbs.length
+    );
 
-    // Insert activities
-    console.log("[ChatService.generateScheduleFromContext] Step 4: Inserting activities...");
+    // Insert activities with mapped WBS IDs
+    console.log(
+      "[ChatService.generateScheduleFromContext] Step 4: Inserting activities..."
+    );
     for (const activity of scheduleData.activities) {
+      // Map activity.wbsId (temporary ID) to real database ID
+      const realWbsId = activity.wbsId
+        ? wbsIdMap.get(activity.wbsId) || null
+        : null;
+
       await db.insert(activities).values({
         id: nanoid(),
         scheduleId,
-        wbsId: activity.wbsId,
+        wbsId: realWbsId,
         code: activity.code,
         name: activity.name,
         description: activity.description,
@@ -1037,13 +1314,20 @@ Retorne APENAS o JSON, sem explicações.`;
         updatedAt: now,
       });
     }
-    console.log("[ChatService.generateScheduleFromContext] ✅ Step 4: Activities inserted:", scheduleData.activities.length);
+    console.log(
+      "[ChatService.generateScheduleFromContext] ✅ Step 4: Activities inserted:",
+      scheduleData.activities.length
+    );
 
     // Generate and upload XER file
-    console.log("[ChatService.generateScheduleFromContext] Step 5: Starting XER file generation...");
+    console.log(
+      "[ChatService.generateScheduleFromContext] Step 5: Starting XER file generation..."
+    );
     try {
       // Fetch the complete schedule with all relations needed for XER generation
-      console.log("[ChatService.generateScheduleFromContext] Step 5.1: Fetching complete schedule with relations...");
+      console.log(
+        "[ChatService.generateScheduleFromContext] Step 5.1: Fetching complete schedule with relations..."
+      );
       const completeSchedule = await db.query.schedules.findFirst({
         where: eq(schedules.id, scheduleId),
         with: {
@@ -1064,30 +1348,50 @@ Retorne APENAS o JSON, sem explicações.`;
       });
 
       if (!completeSchedule) {
-        console.error("[ChatService.generateScheduleFromContext] ❌ Step 5.1: Schedule not found after creation:", scheduleId);
+        console.error(
+          "[ChatService.generateScheduleFromContext] ❌ Step 5.1: Schedule not found after creation:",
+          scheduleId
+        );
         return scheduleId;
       }
 
-      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5.1: Schedule found:", {
-        id: completeSchedule.id,
-        name: completeSchedule.name,
-        activitiesCount: completeSchedule.activities?.length || 0,
-        wbsItemsCount: completeSchedule.wbsItems?.length || 0,
-        hasProject: !!completeSchedule.project,
-        hasOrganization: !!completeSchedule.project?.organization,
-      });
+      console.log(
+        "[ChatService.generateScheduleFromContext] ✅ Step 5.1: Schedule found:",
+        {
+          id: completeSchedule.id,
+          name: completeSchedule.name,
+          activitiesCount: completeSchedule.activities?.length || 0,
+          wbsItemsCount: completeSchedule.wbsItems?.length || 0,
+          hasProject: !!completeSchedule.project,
+          hasOrganization: !!completeSchedule.project?.organization,
+        }
+      );
 
-      if (!completeSchedule.activities || completeSchedule.activities.length === 0) {
-        console.warn("[ChatService.generateScheduleFromContext] ⚠️ Step 5.1: Schedule has no activities, skipping XER generation");
+      if (
+        !completeSchedule.activities ||
+        completeSchedule.activities.length === 0
+      ) {
+        console.warn(
+          "[ChatService.generateScheduleFromContext] ⚠️ Step 5.1: Schedule has no activities, skipping XER generation"
+        );
         return scheduleId;
       }
 
-      console.log("[ChatService.generateScheduleFromContext] Step 5.2: Calling generateAndUploadXER()...");
+      console.log(
+        "[ChatService.generateScheduleFromContext] Step 5.2: Calling generateAndUploadXER()..."
+      );
       const xerFileKey = await generateAndUploadXER(completeSchedule as any);
-      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5.2: XER file generated and uploaded!");
-      console.log("[ChatService.generateScheduleFromContext] XER S3 key:", xerFileKey);
-      
-      console.log("[ChatService.generateScheduleFromContext] Step 5.3: Saving XER file key to schedule...");
+      console.log(
+        "[ChatService.generateScheduleFromContext] ✅ Step 5.2: XER file generated and uploaded!"
+      );
+      console.log(
+        "[ChatService.generateScheduleFromContext] XER S3 key:",
+        xerFileKey
+      );
+
+      console.log(
+        "[ChatService.generateScheduleFromContext] Step 5.3: Saving XER file key to schedule..."
+      );
       // Update schedule with XER file key
       await db
         .update(schedules)
@@ -1096,14 +1400,26 @@ Retorne APENAS o JSON, sem explicações.`;
           updatedAt: new Date(),
         })
         .where(eq(schedules.id, scheduleId));
-      
-      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5.3: XER file key saved to schedule");
-      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5: XER generation completed successfully!");
+
+      console.log(
+        "[ChatService.generateScheduleFromContext] ✅ Step 5.3: XER file key saved to schedule"
+      );
+      console.log(
+        "[ChatService.generateScheduleFromContext] ✅ Step 5: XER generation completed successfully!"
+      );
     } catch (error) {
       console.error("=".repeat(80));
-      console.error("[ChatService.generateScheduleFromContext] ❌ ERROR in Step 5 (XER generation):");
-      console.error("[ChatService.generateScheduleFromContext] Error type:", error instanceof Error ? error.constructor.name : typeof error);
-      console.error("[ChatService.generateScheduleFromContext] Error message:", error instanceof Error ? error.message : String(error));
+      console.error(
+        "[ChatService.generateScheduleFromContext] ❌ ERROR in Step 5 (XER generation):"
+      );
+      console.error(
+        "[ChatService.generateScheduleFromContext] Error type:",
+        error instanceof Error ? error.constructor.name : typeof error
+      );
+      console.error(
+        "[ChatService.generateScheduleFromContext] Error message:",
+        error instanceof Error ? error.message : String(error)
+      );
       if (error instanceof Error && error.stack) {
         console.error("[ChatService.generateScheduleFromContext] Stack trace:");
         console.error(error.stack);
@@ -1264,6 +1580,117 @@ Retorne APENAS o JSON, sem explicações.`;
       })
       .where(eq(chatSessions.id, sessionId));
 
+    // If schedule should be generated, generate it automatically
+    let generatedScheduleId: string | undefined;
+    if (result.shouldGenerateSchedule) {
+      console.log("=".repeat(80));
+      console.log(
+        "[ChatService.resendMessage] ⚡ shouldGenerateSchedule is TRUE - Starting automatic generation"
+      );
+      console.log("[ChatService.resendMessage] Session ID:", sessionId);
+      console.log(
+        "[ChatService.resendMessage] User message:",
+        message.content.substring(0, 100)
+      );
+      console.log("=".repeat(80));
+
+      try {
+        console.log(
+          "[ChatService.resendMessage] Step 1: Calling generateSchedule()..."
+        );
+        generatedScheduleId = await this.generateSchedule(sessionId);
+        console.log(
+          "[ChatService.resendMessage] ✅ Step 1: Schedule generated successfully!"
+        );
+        console.log(
+          "[ChatService.resendMessage] Generated Schedule ID:",
+          generatedScheduleId
+        );
+
+        // Verify the schedule was created and has xerFileKey
+        const createdSchedule = await db.query.schedules.findFirst({
+          where: eq(schedules.id, generatedScheduleId),
+        });
+
+        if (createdSchedule) {
+          console.log(
+            "[ChatService.resendMessage] Step 2: Verifying schedule creation..."
+          );
+          console.log("[ChatService.resendMessage] Schedule found:", {
+            id: createdSchedule.id,
+            name: createdSchedule.name,
+            xerFileKey: createdSchedule.xerFileKey || "NOT SET",
+          });
+
+          if (createdSchedule.xerFileKey) {
+            console.log(
+              "[ChatService.resendMessage] ✅ Step 2: XER file key is set:",
+              createdSchedule.xerFileKey
+            );
+          } else {
+            console.error(
+              "[ChatService.resendMessage] ❌ Step 2: XER file key is NOT set!"
+            );
+          }
+        } else {
+          console.error(
+            "[ChatService.resendMessage] ❌ Step 2: Schedule not found after generation!"
+          );
+        }
+
+        // Add a message informing the user that the schedule was generated
+        const scheduleGeneratedMessage = `✅ Cronograma gerado com sucesso! O arquivo .xer foi criado e está disponível para download na página do cronograma.`;
+
+        console.log(
+          "[ChatService.resendMessage] Step 3: Adding success message to chat..."
+        );
+        await db.insert(chatMessages).values({
+          id: nanoid(),
+          sessionId,
+          role: "assistant",
+          content: scheduleGeneratedMessage,
+          createdAt: new Date(),
+        });
+        console.log(
+          "[ChatService.resendMessage] ✅ Step 3: Success message added"
+        );
+        console.log("=".repeat(80));
+      } catch (error) {
+        console.error("=".repeat(80));
+        console.error(
+          "[ChatService.resendMessage] ❌ ERROR during automatic schedule generation:"
+        );
+        console.error(
+          "[ChatService.resendMessage] Error type:",
+          error instanceof Error ? error.constructor.name : typeof error
+        );
+        console.error(
+          "[ChatService.resendMessage] Error message:",
+          error instanceof Error ? error.message : String(error)
+        );
+        if (error instanceof Error && error.stack) {
+          console.error("[ChatService.resendMessage] Stack trace:");
+          console.error(error.stack);
+        }
+        console.error("=".repeat(80));
+
+        // Don't throw - we still want to return the assistant message
+        // Add error message to chat
+        const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        await db.insert(chatMessages).values({
+          id: nanoid(),
+          sessionId,
+          role: "assistant",
+          content: errorMessage,
+          createdAt: new Date(),
+        });
+      }
+    } else {
+      console.log(
+        "[ChatService.resendMessage] shouldGenerateSchedule is FALSE - No automatic generation"
+      );
+    }
+
     return {
       userMessage: {
         id: messageId,
@@ -1278,6 +1705,7 @@ Retorne APENAS o JSON, sem explicações.`;
         createdAt: new Date(),
       },
       shouldGenerateSchedule: result.shouldGenerateSchedule,
+      generatedScheduleId,
     };
   }
 }
