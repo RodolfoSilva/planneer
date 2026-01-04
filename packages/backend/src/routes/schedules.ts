@@ -10,9 +10,12 @@ import {
   UnauthorizedError,
 } from "../lib/errors";
 import { getUserOrganizations } from "../services/organization";
-import { generateXER, generateAndUploadXER } from "../services/export/xer-generator";
+import {
+  generateXER,
+  generateAndUploadXER,
+} from "../services/export/xer-generator";
 import { generateXML } from "../services/export/xml-generator";
-import { getSignedUrl } from "../services/storage";
+import { getSignedDownloadUrl } from "../services/storage";
 
 // Helper to get authenticated user
 async function getAuthUser(request: Request) {
@@ -272,7 +275,7 @@ export const scheduleRoutes = new Elysia({ prefix: "/api/schedules" })
           content = await generateXER(schedule as any);
           contentType = "text/plain";
           filename = `${schedule.name}.xer`;
-          
+
           // Also upload to S3 and update schedule
           try {
             xerFileKey = await generateAndUploadXER(schedule as any);
@@ -343,14 +346,19 @@ export const scheduleRoutes = new Elysia({ prefix: "/api/schedules" })
         throw new NotFoundError("XER file", "not found for this schedule");
       }
 
-      // Generate signed URL for download (valid for 1 hour)
-      const downloadUrl = await getSignedUrl(schedule.xerFileKey, 3600);
+      // Generate signed URL with download header (valid for 1 hour)
+      const filename = `${schedule.name.replace(/[^a-zA-Z0-9-_]/g, "_")}.xer`;
+      const downloadUrl = await getSignedDownloadUrl(
+        schedule.xerFileKey,
+        filename,
+        3600
+      );
 
       return {
         success: true,
         data: {
           downloadUrl,
-          filename: `${schedule.name}.xer`,
+          filename,
         },
       };
     },
