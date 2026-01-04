@@ -163,3 +163,6 @@ export const embeddings = pgTable("embeddings", {
 });
 ```
 
+
+
+
