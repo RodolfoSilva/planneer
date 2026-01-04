@@ -916,32 +916,90 @@ export class ChatService {
     // Build system prompt with context
     const systemPrompt = this.buildSystemPrompt(context, similarTemplates);
 
-    // Get LLM response
-    const originalResponse = await llm.chat([
-      { role: "system", content: systemPrompt },
-      ...history,
-      { role: "user", content: userMessage },
-    ]);
+    // Define functions for intent detection
+    const functions = this.getIntentFunctions();
+
+    // Get LLM response with function calling support
+    const llmResult = await llm.chatWithFunctions(
+      [
+        { role: "system", content: systemPrompt },
+        ...history,
+        { role: "user", content: userMessage },
+      ],
+      functions
+    );
 
     console.log(
       "[ChatService] LLM response received, length:",
-      originalResponse.length
+      llmResult.content.length
+    );
+    console.log(
+      "[ChatService] Function calls detected:",
+      llmResult.functionCalls?.length || 0
     );
 
-    // Check for generation markers in original response (before removing them)
-    const hasGenerationMarker =
-      originalResponse.includes("[GERAR]") ||
-      originalResponse.includes("[generate]") ||
-      originalResponse.includes("[GENERATE]");
+    // Process function calls to determine intent
+    if (llmResult.functionCalls && llmResult.functionCalls.length > 0) {
+      for (const functionCall of llmResult.functionCalls) {
+        console.log(
+          "[ChatService] Processing function call:",
+          functionCall.name,
+          functionCall.arguments
+        );
 
-    // Remove generation markers from response before showing to user
-    let response = originalResponse
-      .replace(/\[GERAR\]/gi, "")
-      .replace(/\[generate\]/gi, "")
-      .replace(/\[GENERATE\]/gi, "")
-      .trim();
+        switch (functionCall.name) {
+          case "generate_schedule":
+            // User explicitly requested to generate the schedule
+            shouldGenerateSchedule = true;
+            context.currentStep = "generating";
+            console.log(
+              "[ChatService] generate_schedule function called - will generate schedule"
+            );
+            break;
 
-    // Extract information from user message
+          case "confirm_generation":
+            // User confirmed they want to generate
+            if (this.hasEnoughInfoToGenerate(context)) {
+              shouldGenerateSchedule = true;
+              context.currentStep = "generating";
+              console.log(
+                "[ChatService] confirm_generation function called - will generate schedule"
+              );
+            }
+            break;
+
+          case "request_more_info":
+            // LLM wants to ask for more information
+            const infoType = functionCall.arguments?.infoType as string;
+            console.log(
+              "[ChatService] request_more_info function called:",
+              infoType
+            );
+            context.currentStep = `collecting_${infoType}`;
+            break;
+
+          case "update_project_info":
+            // LLM extracted project information from the message
+            const info = functionCall.arguments?.info as Record<
+              string,
+              unknown
+            >;
+            if (info) {
+              context.collectedInfo = {
+                ...context.collectedInfo,
+                ...info,
+              };
+              console.log(
+                "[ChatService] update_project_info function called, updated info:",
+                Object.keys(info)
+              );
+            }
+            break;
+        }
+      }
+    }
+
+    // Extract information from user message (fallback if function calling didn't extract)
     const extractedInfo = await this.extractProjectInfo(userMessage, context);
 
     // Update context
@@ -954,113 +1012,36 @@ export class ChatService {
       },
     };
 
-    // Check if we have enough information to generate
-    if (this.hasEnoughInfoToGenerate(updatedContext)) {
-      // Check for explicit generation requests first (before asking for confirmation)
-      const lowerMessage = userMessage.toLowerCase().trim();
-      const explicitGenerationKeywords = [
-        "gerar",
-        "criar",
-        "gerar agora",
-        "criar agora",
-        "gerar o cronograma",
-        "criar o cronograma",
-        "gerar projeto",
-        "criar projeto",
-        "gerar arquivo",
-        "criar arquivo",
-        "gerar .xer",
-        "criar .xer",
-        "gerar xer",
-        "criar xer",
-        "pode gerar",
-        "pode criar",
-        "vamos gerar",
-        "vamos criar",
-        "faça o cronograma",
-        "faça o projeto",
-        "faça o arquivo",
-      ];
+    // If we have enough info but haven't triggered generation yet, check if we should ask for confirmation
+    if (
+      this.hasEnoughInfoToGenerate(updatedContext) &&
+      !shouldGenerateSchedule &&
+      updatedContext.currentStep !== "confirm_generation" &&
+      updatedContext.currentStep !== "generating"
+    ) {
+      updatedContext.currentStep = "confirm_generation";
+    }
 
-      const isExplicitGenerationRequest = explicitGenerationKeywords.some(
-        (keyword) => lowerMessage.includes(keyword)
+    // If response is empty but we have function calls, generate an appropriate response
+    let response = llmResult.content.trim();
+    if (
+      !response &&
+      llmResult.functionCalls &&
+      llmResult.functionCalls.length > 0
+    ) {
+      response = this.generateResponseFromFunctionCalls(
+        llmResult.functionCalls,
+        userMessage,
+        updatedContext
       );
+    }
 
-      // Check for confirmation keywords (more comprehensive)
-      const confirmationKeywords = [
-        "sim",
-        "ok",
-        "pode",
-        "vamos",
-        "vamos lá",
-        "confirmo",
-        "confirmado",
-        "está bom",
-        "está ok",
-        "tudo certo",
-        "prossiga",
-        "continue",
-        "faça",
-        "faça isso",
-        "pode fazer",
-        "pode prosseguir",
-        "pode continuar",
-        "está perfeito",
-        "está correto",
-        "concordo",
-        "de acordo",
-      ];
-
-      const isConfirmation = confirmationKeywords.some((keyword) =>
-        lowerMessage.includes(keyword)
+    // Fallback: if still empty, generate a default acknowledgment
+    if (!response) {
+      response = await this.generateFallbackResponse(
+        userMessage,
+        updatedContext
       );
-
-      // Check if the LLM response suggests generation
-      const responseLower = response.toLowerCase();
-
-      const responseSuggestsGeneration =
-        hasGenerationMarker ||
-        responseLower.includes("gerando") ||
-        responseLower.includes("vou gerar") ||
-        responseLower.includes("estou gerando") ||
-        responseLower.includes("gerar agora") ||
-        responseLower.includes("criando o cronograma") ||
-        responseLower.includes("gerando o cronograma") ||
-        responseLower.includes("criando o arquivo") ||
-        responseLower.includes("gerando o arquivo") ||
-        responseLower.includes("vou criar o cronograma") ||
-        responseLower.includes("vou criar o arquivo");
-
-      // If explicit generation request, generate immediately
-      if (isExplicitGenerationRequest) {
-        shouldGenerateSchedule = true;
-        updatedContext.currentStep = "generating";
-        console.log(
-          "[ChatService] Explicit generation request detected, will generate schedule:",
-          {
-            userMessage: lowerMessage.substring(0, 50),
-          }
-        );
-      }
-      // If we're in confirmation step and user confirms, generate
-      else if (context.currentStep?.includes("confirm")) {
-        if (isConfirmation || responseSuggestsGeneration) {
-          shouldGenerateSchedule = true;
-          updatedContext.currentStep = "generating";
-          console.log(
-            "[ChatService] Confirmation detected, will generate schedule:",
-            {
-              isConfirmation,
-              responseSuggestsGeneration,
-              userMessage: lowerMessage.substring(0, 50),
-            }
-          );
-        }
-      }
-      // If we have enough info but haven't asked for confirmation yet, ask now
-      else {
-        updatedContext.currentStep = "confirm_generation";
-      }
     }
 
     return {
@@ -1068,6 +1049,170 @@ export class ChatService {
       updatedContext,
       shouldGenerateSchedule,
     };
+  }
+
+  /**
+   * Define functions that the LLM can call to indicate intents
+   */
+  private getIntentFunctions() {
+    return [
+      {
+        name: "generate_schedule",
+        description:
+          "Chame esta função quando o usuário explicitamente pedir para gerar, criar ou fazer o cronograma/projeto/arquivo. Use quando o usuário usar verbos como 'gerar', 'criar', 'fazer', 'vamos gerar', etc.",
+        parameters: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
+      {
+        name: "confirm_generation",
+        description:
+          "Chame esta função quando o usuário confirmar que deseja gerar o cronograma. Use quando o usuário responder positivamente a uma pergunta de confirmação (sim, ok, pode, confirmo, está bom, etc.) e você já tiver informações suficientes.",
+        parameters: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
+      {
+        name: "request_more_info",
+        description:
+          "Chame esta função quando você precisar pedir mais informações ao usuário antes de gerar o cronograma.",
+        parameters: {
+          type: "object" as const,
+          properties: {
+            infoType: {
+              type: "string",
+              description:
+                "Tipo de informação que está sendo solicitada (ex: 'description', 'startDate', 'duration', 'milestones', 'resources')",
+            },
+          },
+          required: ["infoType"],
+        },
+      },
+      {
+        name: "update_project_info",
+        description:
+          "Chame esta função quando você extrair informações do projeto da mensagem do usuário (descrição, duração, data de início, marcos, recursos, etc.).",
+        parameters: {
+          type: "object" as const,
+          properties: {
+            info: {
+              type: "object",
+              description:
+                "Objeto com as informações extraídas (projectDescription, estimatedDuration, startDate, milestones, constraints, resources, etc.)",
+              properties: {
+                projectDescription: {
+                  type: "string",
+                  description: "Descrição do projeto",
+                },
+                estimatedDuration: {
+                  type: "string",
+                  description: "Duração estimada do projeto",
+                },
+                startDate: {
+                  type: "string",
+                  description: "Data de início do projeto",
+                },
+                milestones: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Marcos importantes do projeto",
+                },
+                constraints: {
+                  type: "string",
+                  description: "Restrições do projeto",
+                },
+                resources: {
+                  type: "string",
+                  description: "Recursos mencionados",
+                },
+              },
+            },
+          },
+          required: ["info"],
+        },
+      },
+    ];
+  }
+
+  /**
+   * Generate a response when LLM only returned function calls without text
+   */
+  private generateResponseFromFunctionCalls(
+    functionCalls: Array<{ name: string; arguments: Record<string, any> }>,
+    userMessage: string,
+    context: ChatSessionContext
+  ): string {
+    // Check what function was called and generate appropriate response
+    const functionCall = functionCalls[0];
+
+    switch (functionCall.name) {
+      case "update_project_info":
+        const info = functionCall.arguments?.info as Record<string, unknown>;
+        if (info) {
+          // Generate acknowledgment based on what was updated
+          const updatedFields = Object.keys(info);
+          if (
+            updatedFields.includes("estimatedDuration") ||
+            updatedFields.includes("startDate")
+          ) {
+            return "Entendido! Atualizei o prazo do projeto. Há mais alguma informação que você gostaria de ajustar?";
+          }
+          if (updatedFields.includes("projectDescription")) {
+            return "Perfeito! Anotei a descrição do projeto. O que mais você gostaria de informar?";
+          }
+          if (updatedFields.includes("milestones")) {
+            return "Ótimo! Registrei os marcos do projeto. Precisa ajustar mais alguma coisa?";
+          }
+          return "Informações atualizadas! Há mais algo que você gostaria de adicionar ou modificar?";
+        }
+        break;
+
+      case "generate_schedule":
+        return "Perfeito! Vou gerar o cronograma agora com as informações que coletamos.";
+
+      case "confirm_generation":
+        return "Ótimo! Vou gerar o cronograma agora.";
+
+      case "request_more_info":
+        const infoType = functionCall.arguments?.infoType as string;
+        return `Preciso de mais informações sobre ${infoType}. Pode me ajudar com isso?`;
+    }
+
+    return "Entendido! Como posso ajudá-lo agora?";
+  }
+
+  /**
+   * Generate a fallback response when LLM returns empty content
+   */
+  private async generateFallbackResponse(
+    userMessage: string,
+    context: ChatSessionContext
+  ): Promise<string> {
+    // Use a simple LLM call to generate an acknowledgment
+    try {
+      const fallbackPrompt = `O usuário disse: "${userMessage}"
+
+Contexto do projeto:
+${JSON.stringify(context.collectedInfo || {}, null, 2)}
+
+Gere uma resposta breve e natural em português brasileiro reconhecendo a mensagem do usuário e continuando a conversa de forma útil.`;
+
+      const response = await llm.chat([
+        {
+          role: "system",
+          content:
+            "Você é um assistente de planejamento de projetos. Seja breve, natural e útil.",
+        },
+        { role: "user", content: fallbackPrompt },
+      ]);
+
+      return response.trim() || "Entendido! Como posso ajudá-lo?";
+    } catch (error) {
+      console.error("[ChatService] Error generating fallback response:", error);
+      return "Entendido! Como posso ajudá-lo?";
+    }
   }
 
   private buildSystemPrompt(
@@ -1102,15 +1247,25 @@ FORMATO DE EXPORTAÇÃO:
 - O arquivo .xer pode ser importado diretamente no Primavera P6
 
 IMPORTANTE SOBRE GERAÇÃO:
-- Quando o usuário confirmar a geração (dizendo "sim", "gerar", "criar", "ok", "pode gerar"), o sistema irá:
-  1. Gerar o cronograma completo automaticamente
-  2. Criar o arquivo .xer automaticamente
-  3. Disponibilizar o arquivo para download na página do cronograma
+- Quando o usuário confirmar a geração ou pedir explicitamente para gerar, use a função generate_schedule ou confirm_generation
+- O sistema irá gerar o cronograma completo automaticamente e criar o arquivo .xer
 - NUNCA gere ou mencione links de download na sua resposta - o sistema faz isso automaticamente
 - Apenas informe que o cronograma e o arquivo .xer foram gerados com sucesso
 - NÃO crie URLs, links ou caminhos de arquivo - isso é feito pelo sistema
-- Quando você quiser que o sistema gere o cronograma, use a marcação [GERAR] no final da sua resposta
-- Se o usuário pedir explicitamente para gerar, criar ou fazer o cronograma/projeto/arquivo, você deve indicar que vai gerar usando [GERAR]`;
+- Use as funções disponíveis para indicar suas intenções:
+  * generate_schedule: quando o usuário pedir explicitamente para gerar/criar/fazer
+  * confirm_generation: quando o usuário confirmar positivamente uma pergunta de confirmação
+  * update_project_info: quando extrair informações do projeto da mensagem
+  * request_more_info: quando precisar pedir mais informações
+
+CRÍTICO - SEMPRE RETORNE TEXTO:
+- Você DEVE sempre retornar uma resposta de texto ao usuário, mesmo quando usar funções
+- Quando chamar uma função, também forneça uma resposta de texto explicando o que você está fazendo
+- NUNCA retorne apenas uma chamada de função sem texto - o usuário precisa ver uma resposta
+- Exemplos:
+  * Se chamar update_project_info, diga algo como "Entendido! Atualizei o prazo do projeto..."
+  * Se chamar generate_schedule, diga algo como "Perfeito! Vou gerar o cronograma agora..."
+  * Se chamar confirm_generation, diga algo como "Ótimo! Vou gerar o cronograma agora..."`;
 
     if (similarTemplateIds.length > 0) {
       prompt += `\n\nTEMPLATES SIMILARES ENCONTRADOS: ${similarTemplateIds.length} projetos similares foram identificados e serão usados como referência.`;
