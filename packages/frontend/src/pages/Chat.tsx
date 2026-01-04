@@ -115,11 +115,6 @@ export function Chat() {
       setTimeout(() => {
         inputRef.current?.focus();
       }, 100);
-
-      // If schedule was generated, show it
-      if (data.data.generatedScheduleId) {
-        navigate({ to: `/schedules/${data.data.generatedScheduleId}` });
-      }
     },
     onError: (err: Error) => {
       setIsTyping(false);

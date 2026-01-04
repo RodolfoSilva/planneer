@@ -483,8 +483,9 @@ export class ChatService {
     // Check if user has access to the project's organization
     // (This should be verified at the route level, but we check here too)
 
-    // Look for an existing active session for this project
-    // Get all sessions for this project and user, then find the most recent active one
+    // Look for an existing session for this project (any status)
+    // Get all sessions for this project and user, then find the most recent one
+    // This preserves chat history even if the session was marked as "completed"
     const allSessions = await db.query.chatSessions.findMany({
       where: eq(chatSessions.projectId, projectId),
       with: {
@@ -494,19 +495,36 @@ export class ChatService {
       },
     });
 
-    // Filter for active sessions by this user and get the most recent
-    const activeSessions = allSessions
-      .filter((s) => s.status === "active" && s.userId === userId)
+    // Filter for sessions by this user and get the most recent (regardless of status)
+    const userSessions = allSessions
+      .filter((s) => s.userId === userId)
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 
-    const existingSession = activeSessions[0] || null;
+    const existingSession = userSessions[0] || null;
 
-    // If there's an active session, return it with properly ordered messages
+    // If there's an existing session, reactivate it if needed and return it
     if (existingSession) {
       console.log(
-        "[ChatService] Found existing active session:",
-        existingSession.id
+        "[ChatService] Found existing session:",
+        existingSession.id,
+        "Status:",
+        existingSession.status
       );
+
+      // If the session is completed, reactivate it to allow continuing the conversation
+      if (existingSession.status === "completed") {
+        console.log(
+          "[ChatService] Reactivating completed session to preserve history"
+        );
+        await db
+          .update(chatSessions)
+          .set({
+            status: "active",
+            updatedAt: new Date(),
+          })
+          .where(eq(chatSessions.id, existingSession.id));
+      }
+
       // Fetch the session again with messages ordered correctly
       const sessionWithMessages = await db.query.chatSessions.findFirst({
         where: eq(chatSessions.id, existingSession.id),
