@@ -153,15 +153,61 @@ export async function generateXER(schedule: ScheduleWithRelations): Promise<stri
 export async function generateAndUploadXER(
   schedule: ScheduleWithRelations
 ): Promise<string> {
+  console.log("=".repeat(80));
+  console.log("[XERGenerator] 🚀 Starting XER file generation and upload");
+  console.log("[XERGenerator] Schedule ID:", schedule.id);
+  console.log("[XERGenerator] Schedule name:", schedule.name);
+  console.log("[XERGenerator] Activities count:", schedule.activities?.length || 0);
+  console.log("=".repeat(80));
+  
   // Generate XER content
-  const xerContent = await generateXER(schedule);
+  console.log("[XERGenerator] Step 1: Generating XER file content...");
+  let xerContent: string;
+  try {
+    xerContent = await generateXER(schedule);
+    console.log("[XERGenerator] ✅ Step 1: XER content generated successfully");
+    console.log("[XERGenerator] Content length:", xerContent.length, "characters");
+    console.log("[XERGenerator] First 100 chars:", xerContent.substring(0, 100));
+  } catch (error) {
+    console.error("[XERGenerator] ❌ Step 1: Error generating XER content:", error);
+    if (error instanceof Error) {
+      console.error("[XERGenerator] Error details:", {
+        message: error.message,
+        stack: error.stack,
+      });
+    }
+    throw error;
+  }
   
   // Create S3 key: schedules/{scheduleId}/{scheduleName}.xer
   const sanitizedName = schedule.name.replace(/[^a-zA-Z0-9-_]/g, '_');
   const s3Key = `schedules/${schedule.id}/${sanitizedName}.xer`;
+  console.log("[XERGenerator] Step 2: S3 key created:", s3Key);
   
   // Upload to S3
-  await uploadFile(s3Key, xerContent, 'text/plain');
+  console.log("[XERGenerator] Step 3: Uploading file to S3...");
+  console.log("[XERGenerator] Bucket: planneer (default)");
+  console.log("[XERGenerator] Key:", s3Key);
+  console.log("[XERGenerator] Content type: text/plain");
+  console.log("[XERGenerator] Content size:", xerContent.length, "bytes");
+  
+  try {
+    await uploadFile(s3Key, xerContent, 'text/plain');
+    console.log("[XERGenerator] ✅ Step 3: File uploaded successfully to S3!");
+    console.log("[XERGenerator] ✅ Upload completed - File is now available at:", s3Key);
+    console.log("=".repeat(80));
+  } catch (error) {
+    console.error("=".repeat(80));
+    console.error("[XERGenerator] ❌ Step 3: ERROR uploading to S3:");
+    console.error("[XERGenerator] Error type:", error instanceof Error ? error.constructor.name : typeof error);
+    console.error("[XERGenerator] Error message:", error instanceof Error ? error.message : String(error));
+    if (error instanceof Error && error.stack) {
+      console.error("[XERGenerator] Stack trace:");
+      console.error(error.stack);
+    }
+    console.error("=".repeat(80));
+    throw error;
+  }
   
   return s3Key;
 }

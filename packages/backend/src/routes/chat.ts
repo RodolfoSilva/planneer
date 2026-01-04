@@ -212,4 +212,68 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
         projectId: t.String(),
       }),
     }
+  )
+  .patch(
+    "/:sessionId/message/:messageId",
+    async ({ params, body, request }) => {
+      const user = await getAuthUser(request);
+      const session = await db.query.chatSessions.findFirst({
+        where: eq(chatSessions.id, params.sessionId),
+      });
+
+      if (!session) {
+        throw new NotFoundError("Chat session", params.sessionId);
+      }
+
+      if (session.userId !== user.id) {
+        throw new ForbiddenError("You do not have access to this chat session");
+      }
+
+      const result = await chatService.editMessage(
+        params.sessionId,
+        params.messageId,
+        body.content
+      );
+
+      return { success: true, data: result };
+    },
+    {
+      params: t.Object({
+        sessionId: t.String(),
+        messageId: t.String(),
+      }),
+      body: t.Object({
+        content: t.String({ minLength: 1 }),
+      }),
+    }
+  )
+  .post(
+    "/:sessionId/message/:messageId/resend",
+    async ({ params, request }) => {
+      const user = await getAuthUser(request);
+      const session = await db.query.chatSessions.findFirst({
+        where: eq(chatSessions.id, params.sessionId),
+      });
+
+      if (!session) {
+        throw new NotFoundError("Chat session", params.sessionId);
+      }
+
+      if (session.userId !== user.id) {
+        throw new ForbiddenError("You do not have access to this chat session");
+      }
+
+      const result = await chatService.resendMessage(
+        params.sessionId,
+        params.messageId
+      );
+
+      return { success: true, data: result };
+    },
+    {
+      params: t.Object({
+        sessionId: t.String(),
+        messageId: t.String(),
+      }),
+    }
   );

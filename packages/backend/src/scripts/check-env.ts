@@ -56,3 +56,4 @@ console.log(
 );
 console.log('   - A chave da OpenAI deve começar com "sk-"');
 console.log("   - Reinicie o servidor após modificar o arquivo .env");
+

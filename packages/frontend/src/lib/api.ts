@@ -181,6 +181,18 @@ export const chat = {
       { method: 'POST', body: { content } }
     ),
   
+  editMessage: (sessionId: string, messageId: string, content: string) =>
+    apiRequest<{ success: boolean; data: any }>(
+      `/api/chat/${sessionId}/message/${messageId}`,
+      { method: 'PATCH', body: { content } }
+    ),
+  
+  resendMessage: (sessionId: string, messageId: string) =>
+    apiRequest<{ success: boolean; data: any }>(
+      `/api/chat/${sessionId}/message/${messageId}/resend`,
+      { method: 'POST' }
+    ),
+  
   generateSchedule: (sessionId: string) =>
     apiRequest<{ success: boolean; data: any }>(
       `/api/chat/${sessionId}/generate`,

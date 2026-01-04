@@ -286,3 +286,4 @@ Cada canal implementa a interface `ChatChannelAdapter` que permite:
 
 
 
+

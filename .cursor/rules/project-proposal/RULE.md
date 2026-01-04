@@ -1,0 +1,143 @@
+---
+description: "Project proposal and problem statement: Generative AI for .XER file projects using RAG to derive new projects from historical templates"
+alwaysApply: true
+---
+
+# Project Proposal: Generative AI for .XER File Projects
+
+## Problem Statement
+
+Creating project schedules in Primavera P6 is a time-consuming and expertise-intensive process. Project managers and schedulers face the challenge of:
+
+1. **Manual Schedule Creation**: Building project schedules from scratch requires deep domain knowledge and significant time investment
+2. **Knowledge Loss**: Valuable scheduling patterns and best practices from past projects are not easily reusable
+3. **Inconsistency**: Different schedulers may create different structures for similar projects, leading to inconsistent quality
+4. **Limited Scalability**: Creating schedules manually doesn't scale well for organizations managing multiple projects
+
+## Solution: AI-Powered Schedule Generation with RAG
+
+Planneer is a generative AI platform that uses **Retrieval Augmented Generation (RAG)** to automatically create project schedules by learning from historical .XER files and generating new, customized schedules based on user specifications.
+
+## How It Works
+
+### 1. Knowledge Base from Historical .XER Files
+
+- Users upload existing .XER files (Primavera P6 project files) as templates
+- The system parses these files to extract:
+  - Work Breakdown Structure (WBS)
+  - Activities and their relationships
+  - Durations and dependencies
+  - Resource assignments
+  - Project metadata (type, domain, complexity)
+- Each template is converted to embeddings and stored in a vector database (pgvector)
+- This creates a searchable knowledge base of project scheduling patterns
+
+### 2. User Specification & Contextual Conversation
+
+- User describes their project:
+  - Project type (construction, IT, maintenance, engineering, etc.)
+  - Project description and requirements
+  - Specific constraints or preferences
+- The AI engages in a conversational flow to:
+  - Understand project specifics
+  - Ask clarifying questions
+  - Refine requirements based on similar historical projects
+
+### 3. RAG-Based Schedule Generation
+
+- The system uses RAG to:
+  1. **Retrieve**: Find similar historical projects from the vector database using semantic search
+  2. **Augment**: Use the retrieved project structures as context
+  3. **Generate**: Create a new schedule that combines:
+     - Patterns from similar historical projects
+     - User's specific requirements
+     - Best practices learned from the knowledge base
+
+### 4. Output: Customized .XER File
+
+- The AI generates a complete project schedule including:
+  - Work Breakdown Structure (WBS) hierarchy
+  - Activities with proper naming and organization
+  - Realistic durations based on historical data
+  - Predecessor relationships (dependencies)
+  - Resource assignments
+  - Calendar definitions
+- The schedule is exported as a .XER file ready to import into Primavera P6
+- Users can also view and interact with the schedule in the web interface
+
+## Key Concepts
+
+### .XER Files
+
+- **XER** (Xerox Export/Import) is Primavera P6's native file format
+- Contains complete project schedule data: activities, resources, relationships, calendars, etc.
+- Binary format that can be parsed and generated programmatically
+- The standard format for exchanging Primavera P6 project data
+
+### RAG (Retrieval Augmented Generation)
+
+- **Retrieval**: Semantic search through historical .XER files using vector embeddings
+- **Augmentation**: Enriching LLM prompts with relevant context from similar projects
+- **Generation**: Creating new schedules that combine historical patterns with user requirements
+
+### Workflow
+
+```
+User Input (Project Description)
+    ↓
+AI Conversation (Clarifying Questions)
+    ↓
+RAG Retrieval (Find Similar Projects)
+    ↓
+AI Generation (Create Schedule Structure)
+    ↓
+Schedule Generation (WBS, Activities, Dependencies)
+    ↓
+.XER File Export (Primavera P6 Compatible)
+```
+
+## Technical Implementation
+
+### Import Pipeline
+
+1. **Upload**: User uploads .XER file via API
+2. **Parse**: Extract project structure using `xer-parser` library
+3. **Transform**: Convert to internal data model (schedules, activities, resources)
+4. **Embed**: Generate embeddings from project description and structure
+5. **Store**: Save to PostgreSQL with vector embeddings in pgvector
+
+### Generation Pipeline
+
+1. **Query Understanding**: Process user's project description
+2. **Vector Search**: Find top-k similar projects using cosine similarity
+3. **Context Building**: Extract relevant patterns from similar projects
+4. **LLM Generation**: Use OpenAI/Anthropic to generate schedule structure
+5. **Validation**: Ensure schedule follows Primavera P6 constraints
+6. **XER Export**: Generate .XER file using custom generator
+
+## Use Cases
+
+- **Construction Projects**: Generate schedules for building construction, infrastructure, etc.
+- **IT Projects**: Software development, system implementations, migrations
+- **Maintenance Projects**: Industrial maintenance, facility management
+- **Engineering Projects**: Design projects, engineering studies
+- **Any Project Type**: As long as historical .XER templates are available
+
+## Value Proposition
+
+1. **Time Savings**: Reduce schedule creation time from days/weeks to minutes
+2. **Consistency**: Leverage proven patterns from successful projects
+3. **Knowledge Preservation**: Capture and reuse organizational scheduling expertise
+4. **Scalability**: Generate multiple schedules quickly for portfolio management
+5. **Quality**: Benefit from best practices embedded in historical projects
+
+## When Working on This Project
+
+- Always consider the end goal: generating valid, importable .XER files
+- Remember that .XER format has specific requirements and constraints
+- Ensure RAG retrieval finds truly similar projects (not just keyword matches)
+- Validate generated schedules before export (check for cycles, valid dates, etc.)
+- Maintain compatibility with Primavera P6 import requirements
+- Consider multi-tenancy: organizations should only see their own templates
+- Optimize for both accuracy (correct schedule structure) and usability (user-friendly interface)
+

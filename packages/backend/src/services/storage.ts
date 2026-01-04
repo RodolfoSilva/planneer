@@ -18,14 +18,35 @@ export async function uploadFile(
   body: ArrayBuffer | Buffer | string,
   contentType?: string
 ): Promise<string> {
+  console.log("[Storage] Uploading file:", { key, bucket: BUCKET, contentType, bodyType: typeof body });
+  
+  const bodyBuffer = body instanceof ArrayBuffer 
+    ? Buffer.from(body) 
+    : typeof body === 'string' 
+      ? Buffer.from(body, 'utf-8')
+      : body;
+  
   const command = new PutObjectCommand({
     Bucket: BUCKET,
     Key: key,
-    Body: body instanceof ArrayBuffer ? Buffer.from(body) : body,
-    ContentType: contentType,
+    Body: bodyBuffer,
+    ContentType: contentType || 'application/octet-stream',
   });
   
-  await s3Client.send(command);
+  try {
+    await s3Client.send(command);
+    console.log("[Storage] File uploaded successfully:", key);
+  } catch (error) {
+    console.error("[Storage] Upload failed:", error);
+    if (error instanceof Error) {
+      console.error("[Storage] Error details:", {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+      });
+    }
+    throw new Error(`Failed to upload file to S3: ${error instanceof Error ? error.message : String(error)}`);
+  }
   
   return key;
 }

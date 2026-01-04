@@ -44,6 +44,7 @@ export function Chat() {
   const [optimisticMessages, setOptimisticMessages] = useState<
     Array<{ id: string; role: "user"; content: string; createdAt: string }>
   >([]);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -110,6 +111,11 @@ export function Chat() {
       setOptimisticMessages([]);
       queryClient.invalidateQueries({ queryKey: ["chat-session", sessionId] });
 
+      // Return focus to input after message is sent
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+
       // If schedule was generated, show it
       if (data.data.generatedScheduleId) {
         navigate({ to: `/schedules/${data.data.generatedScheduleId}` });
@@ -121,6 +127,105 @@ export function Chat() {
       setOptimisticMessages([]);
       setError(err.message || "Erro ao enviar mensagem. Tente novamente.");
       console.error("[Chat] Error sending message:", err);
+    },
+  });
+
+  // Edit message mutation
+  const editMessageMutation = useMutation({
+    mutationFn: ({
+      messageId,
+      content,
+    }: {
+      messageId: string;
+      content: string;
+    }) => chat.editMessage(sessionId!, messageId, content),
+    onMutate: () => {
+      setError(null);
+    },
+    onSuccess: () => {
+      setEditingMessageId(null);
+      queryClient.invalidateQueries({ queryKey: ["chat-session", sessionId] });
+      // Clear optimistic messages as they will be replaced by server response
+      setOptimisticMessages([]);
+    },
+    onError: (err: Error) => {
+      setError(err.message || "Erro ao editar mensagem. Tente novamente.");
+      console.error("[Chat] Error editing message:", err);
+    },
+  });
+
+  // Resend message mutation
+  const resendMessageMutation = useMutation({
+    mutationFn: (messageId: string) =>
+      chat.resendMessage(sessionId!, messageId),
+    onMutate: async (messageId: string) => {
+      setIsTyping(true);
+      setError(null);
+
+      // Cancel any outgoing refetches to avoid overwriting our optimistic update
+      await queryClient.cancelQueries({
+        queryKey: ["chat-session", sessionId],
+      });
+
+      // Snapshot the previous value
+      const previousSession = queryClient.getQueryData<{
+        success: boolean;
+        data: { messages: any[] };
+      }>(["chat-session", sessionId]);
+
+      // Optimistically remove all messages after the one being resent
+      if (previousSession?.data?.messages) {
+        const messageIndex = previousSession.data.messages.findIndex(
+          (m: any) => m.id === messageId
+        );
+
+        if (messageIndex !== -1) {
+          // Remove all messages after this one
+          const updatedMessages = previousSession.data.messages.slice(
+            0,
+            messageIndex + 1
+          );
+
+          // Update the cache immediately
+          queryClient.setQueryData(["chat-session", sessionId], {
+            ...previousSession,
+            data: {
+              ...previousSession.data,
+              messages: updatedMessages,
+            },
+          });
+        }
+      }
+
+      // Also clear any optimistic messages that might be after this one
+      // Since we're removing all messages after the resent one, clear all optimistic messages
+      setOptimisticMessages([]);
+
+      return { previousSession };
+    },
+    onSuccess: (data) => {
+      setIsTyping(false);
+      queryClient.invalidateQueries({ queryKey: ["chat-session", sessionId] });
+
+      // If schedule was generated, show it
+      if (data.data.shouldGenerateSchedule) {
+        // The schedule generation will be handled by the backend
+        queryClient.invalidateQueries({ queryKey: ["schedule"] });
+      }
+    },
+    onError: (err: Error, _messageId: string, context) => {
+      setIsTyping(false);
+
+      // Rollback to previous state on error
+      if (context?.previousSession) {
+        queryClient.setQueryData(
+          ["chat-session", sessionId],
+          context.previousSession
+        );
+      }
+
+      setError(err.message || "Erro ao reenviar mensagem. Tente novamente.");
+      console.error("[Chat] Error resending message:", err);
     },
   });
 
@@ -223,13 +328,45 @@ export function Chat() {
 
     sendMessageMutation.mutate(input.trim());
     setInput("");
+
+    // Return focus to input after sending
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage(e);
+      // Return focus to input after sending
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
     }
+  };
+
+  const handleStartEdit = (messageId: string) => {
+    setEditingMessageId(messageId);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+  };
+
+  const handleEditMessage = (messageId: string, content: string) => {
+    if (
+      content.trim() &&
+      content !== serverMessages.find((m: any) => m.id === messageId)?.content
+    ) {
+      editMessageMutation.mutate({ messageId, content });
+    } else {
+      setEditingMessageId(null);
+    }
+  };
+
+  const handleResendMessage = (messageId: string) => {
+    resendMessageMutation.mutate(messageId);
   };
 
   // Initial screen - no session
@@ -386,6 +523,12 @@ export function Chat() {
                 role={message.role}
                 content={message.content}
                 timestamp={message.createdAt}
+                messageId={message.id}
+                onEdit={handleEditMessage}
+                onResend={handleResendMessage}
+                onStartEdit={handleStartEdit}
+                onCancelEdit={handleCancelEdit}
+                isEditing={editingMessageId === message.id}
               />
             ))}
 
@@ -403,7 +546,7 @@ export function Chat() {
             {error}
           </div>
         )}
-        <form onSubmit={handleSendMessage} className="flex gap-3">
+        <form onSubmit={handleSendMessage} className="flex gap-3 items-stretch">
           <div className="flex-1 relative">
             <textarea
               ref={inputRef}
@@ -411,7 +554,7 @@ export function Chat() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Descreva seu projeto ou responda às perguntas..."
-              className="input resize-none pr-12"
+              className="input resize-none pr-12 select-text min-h-[42px]"
               rows={1}
               disabled={
                 sendMessageMutation.isPending ||
@@ -422,7 +565,7 @@ export function Chat() {
           <button
             type="submit"
             disabled={!input.trim() || sendMessageMutation.isPending}
-            className="btn-primary"
+            className="btn-primary self-stretch px-4 min-h-[42px]"
           >
             {sendMessageMutation.isPending ? (
               <Loader2 className="w-5 h-5 animate-spin" />

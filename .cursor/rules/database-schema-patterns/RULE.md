@@ -1,0 +1,165 @@
+---
+description: "Database schema patterns using Drizzle ORM, migrations, and relational queries"
+globs:
+  - "packages/backend/src/db/schema/**/*.ts"
+  - "packages/backend/drizzle/**/*.sql"
+alwaysApply: false
+---
+
+# Database Schema Patterns
+
+## Drizzle ORM Schema Definition
+
+When creating or modifying database schemas in `packages/backend/src/db/schema/`:
+
+- Use Drizzle ORM's `pgTable` for table definitions
+- Export schemas from individual files and re-export from `index.ts`
+- Use TypeScript types for column definitions
+- Follow naming conventions: snake_case for database columns, camelCase for TypeScript
+
+Example schema structure:
+
+```typescript
+import { pgTable, text, timestamp, uuid, boolean } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
+import { createId } from "@paralleldrive/cuid2";
+
+export const resources = pgTable("resources", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  scheduleId: text("schedule_id").notNull(),
+  name: text("name").notNull(),
+  type: text("type").notNull(), // 'labor', 'material', 'equipment'
+  quantity: text("quantity"),
+  unit: text("unit"),
+  cost: text("cost"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const resourcesRelations = relations(resources, ({ one }) => ({
+  schedule: one(schedules, {
+    fields: [resources.scheduleId],
+    references: [schedules.id],
+  }),
+}));
+```
+
+## Schema Conventions
+
+- **IDs**: Use `text` type with `createId()` from `@paralleldrive/cuid2` or `nanoid()` for primary keys
+- **Timestamps**: Always include `createdAt` and `updatedAt` with `defaultNow()`
+- **Foreign Keys**: Use `text` type matching the referenced table's ID type
+- **Nullable Fields**: Use `.notNull()` explicitly, omit for nullable fields
+- **Enums**: Use `text` type with TypeScript union types for enums
+
+## Relations
+
+- Define relations using `relations()` from `drizzle-orm`
+- Export relation objects with `{tableName}Relations` naming
+- Use `one()` for one-to-one or many-to-one
+- Use `many()` for one-to-many or many-to-many
+
+Example:
+
+```typescript
+export const schedulesRelations = relations(schedules, ({ one, many }) => ({
+  project: one(projects, {
+    fields: [schedules.projectId],
+    references: [projects.id],
+  }),
+  activities: many(activities),
+  resources: many(resources),
+}));
+```
+
+## Migrations
+
+- Generate migrations using `bun db:generate` (runs `drizzle-kit generate`)
+- Review generated SQL files in `packages/backend/drizzle/`
+- Never edit migration files manually after generation
+- Run migrations with `bun db:migrate` (runs `drizzle-kit migrate`)
+- Use `bun db:push` for development (pushes schema directly, no migration files)
+
+## Query Patterns
+
+- Use `db.query` for relational queries with joins:
+
+```typescript
+const schedule = await db.query.schedules.findFirst({
+  where: eq(schedules.id, scheduleId),
+  with: {
+    project: {
+      with: { organization: true },
+    },
+    activities: true,
+    resources: true,
+  },
+});
+```
+
+- Use `db.select()` for simple queries:
+
+```typescript
+const schedules = await db
+  .select()
+  .from(schedules)
+  .where(eq(schedules.projectId, projectId))
+  .orderBy(desc(schedules.updatedAt));
+```
+
+- Use `db.insert()`, `db.update()`, `db.delete()` for mutations
+
+## Multi-tenancy
+
+- Always include `organizationId` in tables that need multi-tenant isolation
+- Verify organization membership before queries
+- Use organization-scoped queries in routes:
+
+```typescript
+const userOrgs = await getUserOrganizations(user.id);
+const orgIds = userOrgs.map((org) => org.id);
+
+const projects = await db.query.projects.findMany({
+  where: inArray(projects.organizationId, orgIds),
+});
+```
+
+## Indexes
+
+- Add indexes for frequently queried columns (foreign keys, search fields)
+- Use `index()` from `drizzle-orm/pg-core`:
+
+```typescript
+import { index } from "drizzle-orm/pg-core";
+
+export const schedules = pgTable(
+  "schedules",
+  {
+    // columns...
+  },
+  (table) => ({
+    projectIdIdx: index("schedules_project_id_idx").on(table.projectId),
+    createdAtIdx: index("schedules_created_at_idx").on(table.createdAt),
+  })
+);
+```
+
+## Vector Embeddings (pgvector)
+
+- Use `vector()` type from `drizzle-orm/pg-core` for embedding columns
+- Store embeddings for RAG (Retrieval Augmented Generation) use cases
+- Use cosine similarity for vector searches
+
+```typescript
+import { vector } from "drizzle-orm/pg-core";
+
+export const embeddings = pgTable("embeddings", {
+  id: text("id").primaryKey().$defaultFn(() => createId()),
+  content: text("content").notNull(),
+  embedding: vector("embedding", { dimensions: 1536 }), // OpenAI ada-002
+  metadata: text("metadata"), // JSON string
+});
+```
+

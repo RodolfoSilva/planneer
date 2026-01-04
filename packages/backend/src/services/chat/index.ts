@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { eq } from "drizzle-orm";
+import { eq, and, gt } from "drizzle-orm";
 import { db } from "../../db";
 import {
   chatSessions,
@@ -126,6 +126,7 @@ export class ChatService {
         userMessageContent
       );
       console.log("[ChatService] Message processed, response length:", result.response.length);
+      console.log("[ChatService] shouldGenerateSchedule:", result.shouldGenerateSchedule);
     } catch (error) {
       console.error("[ChatService] Error processing message:", error);
       throw error;
@@ -155,6 +156,81 @@ export class ChatService {
         updatedAt: new Date(),
       })
       .where(eq(chatSessions.id, sessionId));
+
+    // If schedule should be generated, generate it automatically
+    if (result.shouldGenerateSchedule) {
+      console.log("=".repeat(80));
+      console.log("[ChatService.processExistingMessage] ⚡ shouldGenerateSchedule is TRUE - Starting automatic generation");
+      console.log("[ChatService.processExistingMessage] Session ID:", sessionId);
+      console.log("[ChatService.processExistingMessage] User message:", userMessageContent.substring(0, 100));
+      console.log("=".repeat(80));
+      
+      try {
+        console.log("[ChatService.processExistingMessage] Step 1: Calling generateSchedule()...");
+        const generatedScheduleId = await this.generateSchedule(sessionId);
+        console.log("[ChatService.processExistingMessage] ✅ Step 1: Schedule generated successfully!");
+        console.log("[ChatService.processExistingMessage] Generated Schedule ID:", generatedScheduleId);
+        
+        // Verify the schedule was created and has xerFileKey
+        const createdSchedule = await db.query.schedules.findFirst({
+          where: eq(schedules.id, generatedScheduleId),
+        });
+        
+        if (createdSchedule) {
+          console.log("[ChatService.processExistingMessage] Step 2: Verifying schedule creation...");
+          console.log("[ChatService.processExistingMessage] Schedule found:", {
+            id: createdSchedule.id,
+            name: createdSchedule.name,
+            xerFileKey: createdSchedule.xerFileKey || "NOT SET",
+          });
+          
+          if (createdSchedule.xerFileKey) {
+            console.log("[ChatService.processExistingMessage] ✅ Step 2: XER file key is set:", createdSchedule.xerFileKey);
+          } else {
+            console.error("[ChatService.processExistingMessage] ❌ Step 2: XER file key is NOT set!");
+          }
+        } else {
+          console.error("[ChatService.processExistingMessage] ❌ Step 2: Schedule not found after generation!");
+        }
+        
+        // Add a message informing the user that the schedule was generated
+        const scheduleGeneratedMessage = `✅ Cronograma gerado com sucesso! O arquivo .xer foi criado e está disponível para download na página do cronograma.`;
+        
+        console.log("[ChatService.processExistingMessage] Step 3: Adding success message to chat...");
+        await db.insert(chatMessages).values({
+          id: nanoid(),
+          sessionId,
+          role: "assistant",
+          content: scheduleGeneratedMessage,
+          createdAt: new Date(),
+        });
+        console.log("[ChatService.processExistingMessage] ✅ Step 3: Success message added");
+        console.log("=".repeat(80));
+        
+      } catch (error) {
+        console.error("=".repeat(80));
+        console.error("[ChatService.processExistingMessage] ❌ ERROR during automatic schedule generation:");
+        console.error("[ChatService.processExistingMessage] Error type:", error instanceof Error ? error.constructor.name : typeof error);
+        console.error("[ChatService.processExistingMessage] Error message:", error instanceof Error ? error.message : String(error));
+        if (error instanceof Error && error.stack) {
+          console.error("[ChatService.processExistingMessage] Stack trace:");
+          console.error(error.stack);
+        }
+        console.error("=".repeat(80));
+        
+        // Add error message to chat
+        const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        await db.insert(chatMessages).values({
+          id: nanoid(),
+          sessionId,
+          role: "assistant",
+          content: errorMessage,
+          createdAt: new Date(),
+        });
+      }
+    } else {
+      console.log("[ChatService.processExistingMessage] shouldGenerateSchedule is FALSE - No automatic generation");
+    }
 
     console.log("[ChatService] Existing message processed successfully");
   }
@@ -507,6 +583,83 @@ export class ChatService {
       })
       .where(eq(chatSessions.id, sessionId));
 
+    // If schedule should be generated, generate it automatically
+    let generatedScheduleId: string | undefined;
+    if (result.shouldGenerateSchedule) {
+      console.log("=".repeat(80));
+      console.log("[ChatService] ⚡ shouldGenerateSchedule is TRUE - Starting automatic generation");
+      console.log("[ChatService] Session ID:", sessionId);
+      console.log("[ChatService] User message:", content.substring(0, 100));
+      console.log("=".repeat(80));
+      
+      try {
+        console.log("[ChatService] Step 1: Calling generateSchedule()...");
+        generatedScheduleId = await this.generateSchedule(sessionId);
+        console.log("[ChatService] ✅ Step 1: Schedule generated successfully!");
+        console.log("[ChatService] Generated Schedule ID:", generatedScheduleId);
+        
+        // Verify the schedule was created and has xerFileKey
+        const createdSchedule = await db.query.schedules.findFirst({
+          where: eq(schedules.id, generatedScheduleId),
+        });
+        
+        if (createdSchedule) {
+          console.log("[ChatService] Step 2: Verifying schedule creation...");
+          console.log("[ChatService] Schedule found:", {
+            id: createdSchedule.id,
+            name: createdSchedule.name,
+            xerFileKey: createdSchedule.xerFileKey || "NOT SET",
+          });
+          
+          if (createdSchedule.xerFileKey) {
+            console.log("[ChatService] ✅ Step 2: XER file key is set:", createdSchedule.xerFileKey);
+          } else {
+            console.error("[ChatService] ❌ Step 2: XER file key is NOT set!");
+          }
+        } else {
+          console.error("[ChatService] ❌ Step 2: Schedule not found after generation!");
+        }
+        
+        // Add a message informing the user that the schedule was generated
+        const scheduleGeneratedMessage = `✅ Cronograma gerado com sucesso! O arquivo .xer foi criado e está disponível para download na página do cronograma.`;
+        
+        console.log("[ChatService] Step 3: Adding success message to chat...");
+        await db.insert(chatMessages).values({
+          id: nanoid(),
+          sessionId,
+          role: "assistant",
+          content: scheduleGeneratedMessage,
+          createdAt: new Date(),
+        });
+        console.log("[ChatService] ✅ Step 3: Success message added");
+        console.log("=".repeat(80));
+        
+      } catch (error) {
+        console.error("=".repeat(80));
+        console.error("[ChatService] ❌ ERROR during automatic schedule generation:");
+        console.error("[ChatService] Error type:", error instanceof Error ? error.constructor.name : typeof error);
+        console.error("[ChatService] Error message:", error instanceof Error ? error.message : String(error));
+        if (error instanceof Error && error.stack) {
+          console.error("[ChatService] Stack trace:");
+          console.error(error.stack);
+        }
+        console.error("=".repeat(80));
+        
+        // Don't throw - we still want to return the assistant message
+        // Add error message to chat
+        const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        await db.insert(chatMessages).values({
+          id: nanoid(),
+          sessionId,
+          role: "assistant",
+          content: errorMessage,
+          createdAt: new Date(),
+        });
+      }
+    } else {
+      console.log("[ChatService] shouldGenerateSchedule is FALSE - No automatic generation");
+    }
+
     return {
       userMessage: {
         id: userMessageId,
@@ -521,6 +674,7 @@ export class ChatService {
         createdAt: new Date(),
       },
       shouldGenerateSchedule: result.shouldGenerateSchedule,
+      generatedScheduleId,
     };
   }
 
@@ -528,17 +682,33 @@ export class ChatService {
    * Generate a schedule from a chat session
    */
   async generateSchedule(sessionId: string) {
+    console.log("[ChatService.generateSchedule] Starting schedule generation for session:", sessionId);
+    
     const session = await db.query.chatSessions.findFirst({
       where: eq(chatSessions.id, sessionId),
     });
 
     if (!session) {
+      console.error("[ChatService.generateSchedule] Session not found:", sessionId);
       throw new Error("Session not found");
     }
 
-    const context = session.context as ChatSessionContext;
+    console.log("[ChatService.generateSchedule] Session found:", {
+      id: session.id,
+      projectId: session.projectId,
+      userId: session.userId,
+      hasContext: !!session.context,
+    });
 
-    return this.generateScheduleFromContext(
+    const context = session.context as ChatSessionContext;
+    console.log("[ChatService.generateSchedule] Context:", {
+      projectType: context.projectType,
+      currentStep: context.currentStep,
+      collectedInfoKeys: Object.keys(context.collectedInfo || {}),
+    });
+
+    console.log("[ChatService.generateSchedule] Calling generateScheduleFromContext...");
+    const scheduleId = await this.generateScheduleFromContext(
       {
         id: session.id,
         projectId: session.projectId,
@@ -546,6 +716,9 @@ export class ChatService {
       },
       context
     );
+    
+    console.log("[ChatService.generateSchedule] Schedule generation completed, ID:", scheduleId);
+    return scheduleId;
   }
 
   async getInitialMessage(projectType?: string): Promise<string> {
@@ -597,6 +770,8 @@ export class ChatService {
       ...history,
       { role: "user", content: userMessage },
     ]);
+    
+    console.log("[ChatService] LLM response received, length:", response.length);
 
     // Extract information from user message
     const extractedInfo = await this.extractProjectInfo(userMessage, context);
@@ -616,12 +791,36 @@ export class ChatService {
       // Ask for confirmation before generating
       if (!context.currentStep?.includes("confirm")) {
         updatedContext.currentStep = "confirm_generation";
-      } else if (
-        userMessage.toLowerCase().includes("sim") ||
-        userMessage.toLowerCase().includes("gerar") ||
-        userMessage.toLowerCase().includes("criar")
-      ) {
-        shouldGenerateSchedule = true;
+      } else {
+        // Check for confirmation keywords (more comprehensive)
+        const lowerMessage = userMessage.toLowerCase().trim();
+        const confirmationKeywords = [
+          "sim", "ok", "pode", "pode gerar", "gerar", "criar", "vamos", 
+          "vamos lá", "pode criar", "pode gerar", "gerar agora", "criar agora",
+          "confirmo", "confirmado", "está bom", "está ok", "tudo certo",
+          "prossiga", "continue", "faça", "faça isso", "pode fazer"
+        ];
+        
+        const isConfirmation = confirmationKeywords.some(keyword => 
+          lowerMessage.includes(keyword)
+        );
+        
+        // Also check if the LLM response suggests generation
+        const responseLower = response.toLowerCase();
+        const responseSuggestsGeneration = 
+          responseLower.includes("gerando") ||
+          responseLower.includes("vou gerar") ||
+          responseLower.includes("estou gerando") ||
+          responseLower.includes("gerar agora");
+        
+        if (isConfirmation || responseSuggestsGeneration) {
+          shouldGenerateSchedule = true;
+          console.log("[ChatService] Confirmation detected, will generate schedule:", {
+            isConfirmation,
+            responseSuggestsGeneration,
+            userMessage: lowerMessage.substring(0, 50)
+          });
+        }
       }
     }
 
@@ -659,9 +858,18 @@ INFORMAÇÕES NECESSÁRIAS:
 FORMATO DE EXPORTAÇÃO:
 - O cronograma gerado será exportado automaticamente em formato .xer (Primavera P6)
 - O arquivo .xer será gerado e armazenado automaticamente quando o cronograma for criado
-- O usuário poderá baixar o arquivo .xer através do link de download disponível
+- O usuário poderá baixar o arquivo .xer na página de detalhes do cronograma
 - Este é o único formato de exportação disponível no sistema
-- O arquivo .xer pode ser importado diretamente no Primavera P6`;
+- O arquivo .xer pode ser importado diretamente no Primavera P6
+
+IMPORTANTE SOBRE GERAÇÃO:
+- Quando o usuário confirmar a geração (dizendo "sim", "gerar", "criar"), o sistema irá:
+  1. Gerar o cronograma completo automaticamente
+  2. Criar o arquivo .xer automaticamente
+  3. Disponibilizar o arquivo para download na página do cronograma
+- NUNCA gere ou mencione links de download na sua resposta - o sistema faz isso automaticamente
+- Apenas informe que o cronograma e o arquivo .xer foram gerados com sucesso
+- NÃO crie URLs, links ou caminhos de arquivo - isso é feito pelo sistema`;
 
     if (similarTemplateIds.length > 0) {
       prompt += `\n\nTEMPLATES SIMILARES ENCONTRADOS: ${similarTemplateIds.length} projetos similares foram identificados e serão usados como referência.`;
@@ -725,14 +933,25 @@ Retorne APENAS o JSON, sem explicações.`;
     session: { id: string; projectId?: string | null; userId: string },
     context: ChatSessionContext
   ): Promise<string> {
+    console.log("[ChatService.generateScheduleFromContext] Starting...");
+    console.log("[ChatService.generateScheduleFromContext] Session:", {
+      id: session.id,
+      projectId: session.projectId,
+      userId: session.userId,
+    });
+    
     const info = context.collectedInfo || {};
+    console.log("[ChatService.generateScheduleFromContext] Collected info:", Object.keys(info));
 
     // Get project
     let projectId = session.projectId;
 
     if (!projectId) {
+      console.error("[ChatService.generateScheduleFromContext] No project ID!");
       throw new Error("Project ID is required. Please create a project first.");
     }
+    
+    console.log("[ChatService.generateScheduleFromContext] Project ID:", projectId);
 
     // Update project with final information if available
     const finalDescription = (info.projectDescription as string) || context.projectDescription;
@@ -747,6 +966,7 @@ Retorne APENAS o JSON, sem explicações.`;
     }
 
     // Generate schedule using the scheduler service
+    console.log("[ChatService.generateScheduleFromContext] Step 1: Generating schedule data...");
     const scheduleData = await scheduleGenerator.generate({
       projectType: context.projectType || "other",
       description:
@@ -758,10 +978,16 @@ Retorne APENAS o JSON, sem explicações.`;
       milestones: info.milestones as string[],
       similarTemplateIds: context.similarTemplateIds,
     });
+    console.log("[ChatService.generateScheduleFromContext] ✅ Step 1: Schedule data generated:", {
+      name: scheduleData.name,
+      activitiesCount: scheduleData.activities.length,
+      wbsCount: scheduleData.wbs.length,
+    });
 
     // Create schedule in database
     const scheduleId = nanoid();
     const now = new Date();
+    console.log("[ChatService.generateScheduleFromContext] Step 2: Creating schedule in database, ID:", scheduleId);
 
     await db.insert(schedules).values({
       id: scheduleId,
@@ -776,6 +1002,7 @@ Retorne APENAS o JSON, sem explicações.`;
     });
 
     // Insert WBS
+    console.log("[ChatService.generateScheduleFromContext] Step 3: Inserting WBS items...");
     for (const wbsItem of scheduleData.wbs) {
       await db.insert(wbs).values({
         id: nanoid(),
@@ -788,8 +1015,10 @@ Retorne APENAS o JSON, sem explicações.`;
         createdAt: now,
       });
     }
+    console.log("[ChatService.generateScheduleFromContext] ✅ Step 3: WBS items inserted:", scheduleData.wbs.length);
 
     // Insert activities
+    console.log("[ChatService.generateScheduleFromContext] Step 4: Inserting activities...");
     for (const activity of scheduleData.activities) {
       await db.insert(activities).values({
         id: nanoid(),
@@ -808,10 +1037,13 @@ Retorne APENAS o JSON, sem explicações.`;
         updatedAt: now,
       });
     }
+    console.log("[ChatService.generateScheduleFromContext] ✅ Step 4: Activities inserted:", scheduleData.activities.length);
 
     // Generate and upload XER file
+    console.log("[ChatService.generateScheduleFromContext] Step 5: Starting XER file generation...");
     try {
       // Fetch the complete schedule with all relations needed for XER generation
+      console.log("[ChatService.generateScheduleFromContext] Step 5.1: Fetching complete schedule with relations...");
       const completeSchedule = await db.query.schedules.findFirst({
         where: eq(schedules.id, scheduleId),
         with: {
@@ -831,22 +1063,52 @@ Retorne APENAS o JSON, sem explicações.`;
         },
       });
 
-      if (completeSchedule) {
-        const xerFileKey = await generateAndUploadXER(completeSchedule as any);
-        
-        // Update schedule with XER file key
-        await db
-          .update(schedules)
-          .set({
-            xerFileKey,
-            updatedAt: new Date(),
-          })
-          .where(eq(schedules.id, scheduleId));
-        
-        console.log("[ChatService] XER file generated and uploaded:", xerFileKey);
+      if (!completeSchedule) {
+        console.error("[ChatService.generateScheduleFromContext] ❌ Step 5.1: Schedule not found after creation:", scheduleId);
+        return scheduleId;
       }
+
+      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5.1: Schedule found:", {
+        id: completeSchedule.id,
+        name: completeSchedule.name,
+        activitiesCount: completeSchedule.activities?.length || 0,
+        wbsItemsCount: completeSchedule.wbsItems?.length || 0,
+        hasProject: !!completeSchedule.project,
+        hasOrganization: !!completeSchedule.project?.organization,
+      });
+
+      if (!completeSchedule.activities || completeSchedule.activities.length === 0) {
+        console.warn("[ChatService.generateScheduleFromContext] ⚠️ Step 5.1: Schedule has no activities, skipping XER generation");
+        return scheduleId;
+      }
+
+      console.log("[ChatService.generateScheduleFromContext] Step 5.2: Calling generateAndUploadXER()...");
+      const xerFileKey = await generateAndUploadXER(completeSchedule as any);
+      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5.2: XER file generated and uploaded!");
+      console.log("[ChatService.generateScheduleFromContext] XER S3 key:", xerFileKey);
+      
+      console.log("[ChatService.generateScheduleFromContext] Step 5.3: Saving XER file key to schedule...");
+      // Update schedule with XER file key
+      await db
+        .update(schedules)
+        .set({
+          xerFileKey,
+          updatedAt: new Date(),
+        })
+        .where(eq(schedules.id, scheduleId));
+      
+      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5.3: XER file key saved to schedule");
+      console.log("[ChatService.generateScheduleFromContext] ✅ Step 5: XER generation completed successfully!");
     } catch (error) {
-      console.error("[ChatService] Error generating/uploading XER file:", error);
+      console.error("=".repeat(80));
+      console.error("[ChatService.generateScheduleFromContext] ❌ ERROR in Step 5 (XER generation):");
+      console.error("[ChatService.generateScheduleFromContext] Error type:", error instanceof Error ? error.constructor.name : typeof error);
+      console.error("[ChatService.generateScheduleFromContext] Error message:", error instanceof Error ? error.message : String(error));
+      if (error instanceof Error && error.stack) {
+        console.error("[ChatService.generateScheduleFromContext] Stack trace:");
+        console.error(error.stack);
+      }
+      console.error("=".repeat(80));
       // Don't throw - we don't want to fail schedule creation if XER generation fails
       // The file can be generated later via the export endpoint
     }
@@ -862,5 +1124,160 @@ Retorne APENAS o JSON, sem explicações.`;
       .where(eq(chatSessions.id, session.id));
 
     return scheduleId;
+  }
+
+  /**
+   * Delete all messages after a specific message (by createdAt timestamp)
+   */
+  async deleteMessagesAfter(sessionId: string, messageCreatedAt: Date) {
+    await db
+      .delete(chatMessages)
+      .where(
+        and(
+          eq(chatMessages.sessionId, sessionId),
+          gt(chatMessages.createdAt, messageCreatedAt)
+        )
+      );
+  }
+
+  /**
+   * Edit a user message and remove all subsequent messages
+   */
+  async editMessage(sessionId: string, messageId: string, newContent: string) {
+    // Get the message to edit
+    const message = await db.query.chatMessages.findFirst({
+      where: eq(chatMessages.id, messageId),
+    });
+
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    if (message.sessionId !== sessionId) {
+      throw new Error("Message does not belong to this session");
+    }
+
+    if (message.role !== "user") {
+      throw new Error("Only user messages can be edited");
+    }
+
+    // Update the message content
+    await db
+      .update(chatMessages)
+      .set({ content: newContent })
+      .where(eq(chatMessages.id, messageId));
+
+    // Delete all messages after this one
+    await this.deleteMessagesAfter(sessionId, message.createdAt);
+
+    // Update session updatedAt
+    await db
+      .update(chatSessions)
+      .set({ updatedAt: new Date() })
+      .where(eq(chatSessions.id, sessionId));
+
+    return {
+      message: {
+        id: messageId,
+        role: "user" as const,
+        content: newContent,
+        createdAt: message.createdAt,
+      },
+    };
+  }
+
+  /**
+   * Resend a message (edit and reprocess) and remove all subsequent messages
+   */
+  async resendMessage(sessionId: string, messageId: string) {
+    // Get the message to resend
+    const message = await db.query.chatMessages.findFirst({
+      where: eq(chatMessages.id, messageId),
+    });
+
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    if (message.sessionId !== sessionId) {
+      throw new Error("Message does not belong to this session");
+    }
+
+    if (message.role !== "user") {
+      throw new Error("Only user messages can be resent");
+    }
+
+    // Delete all messages after this one (including any assistant response)
+    await this.deleteMessagesAfter(sessionId, message.createdAt);
+
+    // Get the session with remaining messages
+    const session = await db.query.chatSessions.findFirst({
+      where: eq(chatSessions.id, sessionId),
+      with: {
+        messages: {
+          orderBy: (messages, { asc }) => [asc(messages.createdAt)],
+        },
+      },
+    });
+
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    // Process the message again
+    let result;
+    try {
+      result = await this.processMessage(
+        {
+          id: session.id,
+          context: session.context as ChatSessionContext,
+          messages: session.messages,
+        },
+        message.content
+      );
+    } catch (error) {
+      console.error("[ChatService] Error processing resent message:", error);
+      throw error;
+    }
+
+    // Store assistant response
+    const assistantMessageId = nanoid();
+    try {
+      await db.insert(chatMessages).values({
+        id: assistantMessageId,
+        sessionId,
+        role: "assistant",
+        content: result.response,
+        createdAt: new Date(),
+      });
+    } catch (error) {
+      console.error("[ChatService] Error storing assistant message:", error);
+      throw error;
+    }
+
+    // Update session context
+    await db
+      .update(chatSessions)
+      .set({
+        context: result.updatedContext,
+        updatedAt: new Date(),
+      })
+      .where(eq(chatSessions.id, sessionId));
+
+    return {
+      userMessage: {
+        id: messageId,
+        role: "user" as const,
+        content: message.content,
+        createdAt: message.createdAt,
+      },
+      assistantMessage: {
+        id: assistantMessageId,
+        role: "assistant" as const,
+        content: result.response,
+        createdAt: new Date(),
+      },
+      shouldGenerateSchedule: result.shouldGenerateSchedule,
+    };
   }
 }
