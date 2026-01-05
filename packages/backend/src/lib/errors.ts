@@ -55,6 +55,12 @@ export class ExternalServiceError extends AppError {
   }
 }
 
+export class NoSimilarTemplatesError extends AppError {
+  constructor(message: string = 'Não foram encontrados templates similares para este projeto. Por favor, cadastre um template primeiro.') {
+    super('NO_SIMILAR_TEMPLATES', message, 400);
+  }
+}
+
 
 
 

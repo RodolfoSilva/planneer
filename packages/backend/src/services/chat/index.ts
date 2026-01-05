@@ -8,6 +8,7 @@ import {
   activities,
   wbs,
   projects,
+  projectTemplates,
   type ChatSessionContext,
 } from "../../db/schema";
 import { LLMService } from "../ai/llm";
@@ -15,6 +16,8 @@ import { RAGService } from "../ai/rag";
 import { ScheduleGenerator } from "../scheduler";
 import { PROJECT_TYPE_LABELS } from "@planneer/shared";
 import { generateAndUploadXER } from "../export/xer-generator";
+import { NoSimilarTemplatesError } from "../../lib/errors";
+import { getUserOrganizations } from "../organization";
 
 const llm = new LLMService();
 const rag = new RAGService();
@@ -24,7 +27,7 @@ interface StartSessionOptions {
   userId: string;
   organizationId: string;
   projectType: string;
-  projectDescription: string;
+  projectName: string;
 }
 
 export class ChatService {
@@ -130,6 +133,7 @@ export class ChatService {
           id: session.id,
           context: session.context as ChatSessionContext,
           messages: messagesUpToPending,
+          organizationId: session.organizationId,
         },
         userMessageContent
       );
@@ -270,8 +274,14 @@ export class ChatService {
         }
         console.error("=".repeat(80));
 
-        // Add error message to chat
-        const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        // Add error message to chat with specific message for NoSimilarTemplatesError
+        let errorMessage: string;
+        if (error instanceof NoSimilarTemplatesError) {
+          errorMessage = `⚠️ ${error.message}\n\nPara resolver isso, você pode:\n1. Cadastrar um template de projeto similar na seção de Templates\n2. Aguardar até que templates similares sejam cadastrados\n3. Tentar novamente após cadastrar templates`;
+        } else {
+          errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        }
+
         await db.insert(chatMessages).values({
           id: nanoid(),
           sessionId,
@@ -321,25 +331,19 @@ export class ChatService {
    * Start a new chat session
    */
   async startSession(options: StartSessionOptions) {
-    const { userId, organizationId, projectType, projectDescription } = options;
+    const { userId, organizationId, projectType, projectName } = options;
 
     console.log("[ChatService] Starting session:", {
       userId,
       organizationId,
       projectType,
-      projectDescription,
+      projectName,
     });
 
     const id = nanoid();
     const now = new Date();
 
-    // Generate project name from description (first 50 chars or a default name)
-    const projectName =
-      projectDescription.length > 50
-        ? projectDescription.substring(0, 47) + "..."
-        : projectDescription || "Novo Projeto";
-
-    // Create project first
+    // Create project first (without description - will be collected by AI)
     const projectId = nanoid();
     let createdProject;
     try {
@@ -347,7 +351,7 @@ export class ChatService {
         id: projectId,
         organizationId,
         name: projectName,
-        description: projectDescription,
+        description: null, // Will be collected by AI during chat
         type: projectType as any,
         status: "draft",
         createdAt: now,
@@ -379,10 +383,10 @@ export class ChatService {
 
     const initialContext: ChatSessionContext = {
       projectType,
-      projectDescription,
+      projectDescription: undefined, // Will be collected by AI
       currentStep: "initial",
       collectedInfo: {
-        projectDescription,
+        // No initial description - AI will collect it
       },
       similarTemplateIds: [],
     };
@@ -406,10 +410,10 @@ export class ChatService {
         projectId
       );
 
-      // Get initial message (pass projectDescription so it can be acknowledged)
+      // Get initial message (pass projectName so AI can acknowledge it)
       const initialMessage = await this.getInitialMessage(
         projectType,
-        projectDescription
+        projectName
       );
       console.log(
         "[ChatService] Initial message generated:",
@@ -684,6 +688,7 @@ export class ChatService {
           id: session.id,
           context: session.context as ChatSessionContext,
           messages: session.messages,
+          organizationId: session.organizationId,
         },
         content
       );
@@ -806,8 +811,14 @@ export class ChatService {
         console.error("=".repeat(80));
 
         // Don't throw - we still want to return the assistant message
-        // Add error message to chat
-        const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        // Add error message to chat with specific message for NoSimilarTemplatesError
+        let errorMessage: string;
+        if (error instanceof NoSimilarTemplatesError) {
+          errorMessage = `⚠️ ${error.message}\n\nPara resolver isso, você pode:\n1. Cadastrar um template de projeto similar na seção de Templates\n2. Aguardar até que templates similares sejam cadastrados\n3. Tentar novamente após cadastrar templates`;
+        } else {
+          errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        }
+
         await db.insert(chatMessages).values({
           id: nanoid(),
           sessionId,
@@ -896,27 +907,22 @@ export class ChatService {
 
   async getInitialMessage(
     projectType?: string,
-    projectDescription?: string
+    projectName?: string
   ): Promise<string> {
     const typeLabel = projectType
       ? PROJECT_TYPE_LABELS[projectType as keyof typeof PROJECT_TYPE_LABELS]
       : null;
 
-    // If we have a project description, acknowledge it and ask for complementary info
-    if (projectDescription) {
-      const shortDescription =
-        projectDescription.length > 150
-          ? projectDescription.substring(0, 147) + "..."
-          : projectDescription;
-
-      if (typeLabel) {
-        return `Olá! Vou ajudá-lo a criar um cronograma para seu projeto de **${typeLabel}**.\n\nVi que você descreveu o projeto como: "${shortDescription}"\n\nÓtimo! Para criar um cronograma completo, preciso de algumas informações complementares:\n- Qual a data de início desejada?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes que devemos considerar?`;
-      }
-
-      return `Olá! Sou o assistente de planejamento do Planneer. Vou ajudá-lo a criar um cronograma completo para seu projeto.\n\nVi que você descreveu o projeto como: "${shortDescription}"\n\nÓtimo! Para criar um cronograma completo, preciso de algumas informações complementares:\n- Qual a data de início desejada?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes?`;
+    // We have project name and type, but need to collect description
+    if (projectName && typeLabel) {
+      return `Olá! Vou ajudá-lo a criar um cronograma para o projeto **"${projectName}"** (${typeLabel}).\n\nPara começar, preciso entender melhor o escopo do projeto. Poderia me descrever:\n- Qual é o objetivo principal do projeto?\n- O que será entregue?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes que devemos considerar?\n\nQuanto mais detalhes você fornecer, melhor será o cronograma gerado!`;
     }
 
-    // No description provided - ask for it
+    if (projectName) {
+      return `Olá! Sou o assistente de planejamento do Planneer. Vou ajudá-lo a criar um cronograma completo para o projeto **"${projectName}"**.\n\nPara começar, preciso entender melhor o escopo do projeto. Poderia me descrever:\n- Qual é o objetivo principal do projeto?\n- O que será entregue?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes?\n\nQuanto mais detalhes você fornecer, melhor será o cronograma gerado!`;
+    }
+
+    // Fallback (shouldn't happen in normal flow)
     if (typeLabel) {
       return `Olá! Vou ajudá-lo a criar um cronograma para seu projeto de **${typeLabel}**.\n\nPara começar, poderia me descrever brevemente o escopo do projeto? Por exemplo:\n- Qual é o objetivo principal?\n- Qual a estimativa de duração total?\n- Existem marcos ou entregas importantes?`;
     }
@@ -925,7 +931,12 @@ export class ChatService {
   }
 
   async processMessage(
-    session: { id: string; context: ChatSessionContext; messages?: any[] },
+    session: {
+      id: string;
+      context: ChatSessionContext;
+      messages?: any[];
+      organizationId?: string;
+    },
     userMessage: string
   ): Promise<{
     response: string;
@@ -942,39 +953,51 @@ export class ChatService {
         content: m.content,
       })) || [];
 
-    // If this is the first user message and we have a project description,
-    // include it as context in the conversation
-    const projectDescription =
-      (context.collectedInfo?.projectDescription as string) ||
-      context.projectDescription;
-
-    // Check if this is likely the first exchange (only initial assistant message exists)
-    const isFirstExchange =
-      history.length === 1 &&
-      history[0].role === "assistant" &&
-      projectDescription;
-
-    if (isFirstExchange && projectDescription) {
-      // Prepend a system message with the project description to provide context
-      // This helps the LLM understand the project without asking the user to repeat
-      history.unshift({
-        role: "system",
-        content: `O usuário forneceu a seguinte descrição inicial do projeto: "${projectDescription}". Use esta descrição como contexto base e não peça ao usuário para descrever o projeto novamente. Faça perguntas complementares para refinar detalhes.`,
-      });
-    }
+    // Note: We don't have an initial project description anymore - it will be collected by AI
+    // The AI should ask for it in the first exchange
 
     // Search for similar templates using RAG
     let similarTemplates: string[] = context.similarTemplateIds || [];
     if (!similarTemplates.length && userMessage.length > 20) {
       const ragResults = await rag.searchSimilarProjects(
         userMessage,
-        context.projectType
+        context.projectType,
+        5,
+        0.5 // threshold mínimo de similaridade
       );
       similarTemplates = ragResults.map((r) => r.templateId);
+
+      // Log para debug
+      console.log(
+        `[ChatService] RAG search results: ${ragResults.length} templates found`
+      );
+      if (ragResults.length > 0) {
+        console.log(
+          `[ChatService] Similar templates: ${ragResults
+            .map((r) => `${r.templateName} (${r.similarity.toFixed(2)})`)
+            .join(", ")}`
+        );
+      } else {
+        console.log(
+          `[ChatService] ⚠️ No similar templates found for: ${userMessage.substring(
+            0,
+            50
+          )}`
+        );
+      }
     }
 
+    // Get available template types for the organization
+    const availableTemplateTypes = session.organizationId
+      ? await this.getAvailableTemplateTypes(session.organizationId)
+      : [];
+
     // Build system prompt with context
-    const systemPrompt = this.buildSystemPrompt(context, similarTemplates);
+    const systemPrompt = this.buildSystemPrompt(
+      context,
+      similarTemplates,
+      availableTemplateTypes
+    );
 
     // Define functions for intent detection
     const functions = this.getIntentFunctions();
@@ -999,6 +1022,9 @@ export class ChatService {
     );
 
     // Process function calls to determine intent
+    let shouldOverrideResponse = false;
+    let overrideResponse = "";
+
     if (llmResult.functionCalls && llmResult.functionCalls.length > 0) {
       for (const functionCall of llmResult.functionCalls) {
         console.log(
@@ -1008,6 +1034,28 @@ export class ChatService {
         );
 
         switch (functionCall.name) {
+          case "list_available_template_types":
+            // User asked about available template types
+            console.log(
+              "[ChatService] list_available_template_types function called"
+            );
+            // Build response with template types list
+            if (availableTemplateTypes.length > 0) {
+              const typesList = availableTemplateTypes
+                .map(
+                  (t) =>
+                    `• **${t.label}** - ${t.count} template${
+                      t.count !== 1 ? "s" : ""
+                    }`
+                )
+                .join("\n");
+              overrideResponse = `Aqui estão os tipos de templates disponíveis no sistema:\n\n${typesList}\n\nPosso ajudá-lo a criar um cronograma usando um desses tipos de templates. O que você gostaria de fazer?`;
+            } else {
+              overrideResponse = `Atualmente não há templates cadastrados no sistema.\n\nPara gerar cronogramas, é necessário cadastrar templates de projetos na seção de Templates. Você pode fazer upload de arquivos .xer ou .xml do Primavera P6 para criar templates que serão usados como referência na geração de novos cronogramas.\n\nGostaria de ajuda com mais alguma coisa?`;
+            }
+            shouldOverrideResponse = true;
+            break;
+
           case "generate_schedule":
             // User explicitly requested to generate the schedule
             shouldGenerateSchedule = true;
@@ -1054,7 +1102,7 @@ export class ChatService {
                 Object.keys(info)
               );
 
-              // If projectDescription was updated, also update it in the database
+              // If projectDescription was updated, normalize it and update it in the database
               if (info.projectDescription && session.id) {
                 const sessionData = await db.query.chatSessions.findFirst({
                   where: eq(chatSessions.id, session.id),
@@ -1062,16 +1110,28 @@ export class ChatService {
 
                 if (sessionData?.projectId) {
                   try {
-                    await db
-                      .update(projects)
-                      .set({
-                        description: info.projectDescription as string,
-                        updatedAt: new Date(),
-                      })
-                      .where(eq(projects.id, sessionData.projectId));
-                    console.log(
-                      "[ChatService] Updated project description in database"
-                    );
+                    // Normalize the description - ensure it's a complete, well-structured text
+                    const normalizedDescription = (
+                      info.projectDescription as string
+                    ).trim();
+
+                    // Only update if the description is meaningful (at least 20 characters)
+                    if (normalizedDescription.length >= 20) {
+                      await db
+                        .update(projects)
+                        .set({
+                          description: normalizedDescription,
+                          updatedAt: new Date(),
+                        })
+                        .where(eq(projects.id, sessionData.projectId));
+                      console.log(
+                        "[ChatService] Updated project description in database (normalized)"
+                      );
+                    } else {
+                      console.log(
+                        "[ChatService] Project description too short, not updating yet"
+                      );
+                    }
                   } catch (error) {
                     console.error(
                       "[ChatService] Error updating project description:",
@@ -1100,7 +1160,7 @@ export class ChatService {
       },
     };
 
-    // If projectDescription was extracted and we have a session, update it in the database
+    // If projectDescription was extracted and we have a session, normalize and update it in the database
     if (extractedInfo.projectDescription && session.id) {
       const sessionData = await db.query.chatSessions.findFirst({
         where: eq(chatSessions.id, session.id),
@@ -1108,16 +1168,28 @@ export class ChatService {
 
       if (sessionData?.projectId) {
         try {
-          await db
-            .update(projects)
-            .set({
-              description: extractedInfo.projectDescription as string,
-              updatedAt: new Date(),
-            })
-            .where(eq(projects.id, sessionData.projectId));
-          console.log(
-            "[ChatService] Updated project description from extracted info"
-          );
+          // Normalize the description - ensure it's a complete, well-structured text
+          const normalizedDescription = (
+            extractedInfo.projectDescription as string
+          ).trim();
+
+          // Only update if the description is meaningful (at least 20 characters)
+          if (normalizedDescription.length >= 20) {
+            await db
+              .update(projects)
+              .set({
+                description: normalizedDescription,
+                updatedAt: new Date(),
+              })
+              .where(eq(projects.id, sessionData.projectId));
+            console.log(
+              "[ChatService] Updated project description from extracted info (normalized)"
+            );
+          } else {
+            console.log(
+              "[ChatService] Project description too short, not updating yet"
+            );
+          }
         } catch (error) {
           console.error(
             "[ChatService] Error updating project description from extracted info:",
@@ -1138,10 +1210,15 @@ export class ChatService {
       updatedContext.currentStep = "confirm_generation";
     }
 
+    // If we should override the response (e.g., for list_available_template_types), use it
+    let response = shouldOverrideResponse
+      ? overrideResponse
+      : llmResult.content.trim();
+
     // If response is empty but we have function calls, generate an appropriate response
-    let response = llmResult.content.trim();
     if (
       !response &&
+      !shouldOverrideResponse &&
       llmResult.functionCalls &&
       llmResult.functionCalls.length > 0
     ) {
@@ -1172,6 +1249,15 @@ export class ChatService {
    */
   private getIntentFunctions() {
     return [
+      {
+        name: "list_available_template_types",
+        description:
+          "Chame esta função quando o usuário perguntar sobre quais tipos de templates estão cadastrados, disponíveis ou suportados no sistema. Use quando o usuário perguntar coisas como 'quais templates tem?', 'que tipos de projetos vocês suportam?', 'quais templates estão cadastrados?', etc.",
+        parameters: {
+          type: "object" as const,
+          properties: {},
+        },
+      },
       {
         name: "generate_schedule",
         description:
@@ -1209,18 +1295,19 @@ export class ChatService {
       {
         name: "update_project_info",
         description:
-          "Chame esta função quando você extrair informações do projeto da mensagem do usuário (descrição, duração, data de início, marcos, recursos, etc.).",
+          "Chame esta função quando você extrair informações do projeto da mensagem do usuário (descrição, duração, data de início, marcos, recursos, etc.). IMPORTANTE: Quando coletar a descrição do projeto, normalize-a em um texto claro, completo e bem estruturado que descreva o escopo, objetivos e características principais do projeto.",
         parameters: {
           type: "object" as const,
           properties: {
             info: {
               type: "object",
               description:
-                "Objeto com as informações extraídas (projectDescription, estimatedDuration, startDate, milestones, constraints, resources, etc.)",
+                "Objeto com as informações extraídas (projectDescription, estimatedDuration, startDate, milestones, constraints, resources, etc.). A projectDescription deve ser uma descrição normalizada, completa e bem estruturada do projeto.",
               properties: {
                 projectDescription: {
                   type: "string",
-                  description: "Descrição do projeto",
+                  description:
+                    "Descrição normalizada e completa do projeto. Deve ser um texto claro que descreva o escopo, objetivos, entregas e características principais. Normalize informações dispersas em uma descrição coerente.",
                 },
                 estimatedDuration: {
                   type: "string",
@@ -1285,6 +1372,11 @@ export class ChatService {
         }
         break;
 
+      case "list_available_template_types":
+        // This should not be reached as we handle it in processMessage
+        // But keeping as fallback
+        return "Aqui estão os tipos de templates disponíveis no sistema. Posso ajudá-lo com mais alguma coisa?";
+
       case "generate_schedule":
         return "Perfeito! Vou gerar o cronograma agora com as informações que coletamos.";
 
@@ -1331,9 +1423,53 @@ Gere uma resposta breve e natural em português brasileiro reconhecendo a mensag
     }
   }
 
+  /**
+   * Get available template types for an organization
+   */
+  private async getAvailableTemplateTypes(
+    organizationId: string
+  ): Promise<Array<{ type: string; label: string; count: number }>> {
+    try {
+      // Get all templates for this organization
+      const templates = await db.query.projectTemplates.findMany({
+        where: eq(projectTemplates.organizationId, organizationId),
+        columns: {
+          type: true,
+        },
+      });
+
+      // Count templates by type
+      const typeCounts = new Map<string, number>();
+      for (const template of templates) {
+        const count = typeCounts.get(template.type) || 0;
+        typeCounts.set(template.type, count + 1);
+      }
+
+      // Convert to array with labels
+      const result = Array.from(typeCounts.entries()).map(([type, count]) => ({
+        type,
+        label: PROJECT_TYPE_LABELS[type] || type,
+        count,
+      }));
+
+      return result.sort((a, b) => b.count - a.count); // Sort by count descending
+    } catch (error) {
+      console.error(
+        "[ChatService] Error getting available template types:",
+        error
+      );
+      return [];
+    }
+  }
+
   private buildSystemPrompt(
     context: ChatSessionContext,
-    similarTemplateIds: string[]
+    similarTemplateIds: string[],
+    availableTemplateTypes: Array<{
+      type: string;
+      label: string;
+      count: number;
+    }> = []
   ): string {
     // Get project description from context (prioritize collectedInfo, then context.projectDescription)
     const projectDescription =
@@ -1395,6 +1531,7 @@ IMPORTANTE SOBRE GERAÇÃO:
 - Apenas informe que o cronograma e o arquivo .xer foram gerados com sucesso
 - NÃO crie URLs, links ou caminhos de arquivo - isso é feito pelo sistema
 - Use as funções disponíveis para indicar suas intenções:
+  * list_available_template_types: quando o usuário perguntar sobre quais tipos de templates estão cadastrados ou disponíveis
   * generate_schedule: quando o usuário pedir explicitamente para gerar/criar/fazer
   * confirm_generation: quando o usuário confirmar positivamente uma pergunta de confirmação
   * update_project_info: quando extrair informações do projeto da mensagem
@@ -1410,7 +1547,22 @@ CRÍTICO - SEMPRE RETORNE TEXTO:
   * Se chamar confirm_generation, diga algo como "Ótimo! Vou gerar o cronograma agora..."`;
 
     if (similarTemplateIds.length > 0) {
-      prompt += `\n\nTEMPLATES SIMILARES ENCONTRADOS: ${similarTemplateIds.length} projetos similares foram identificados e serão usados como referência.`;
+      prompt += `\n\nTEMPLATES SIMILARES ENCONTRADOS: ${similarTemplateIds.length} projetos similares foram identificados e serão usados como referência para gerar o cronograma.`;
+    } else {
+      prompt += `\n\n⚠️ IMPORTANTE: Nenhum template similar foi encontrado para este projeto. Você DEVE informar ao usuário que é necessário cadastrar templates similares antes de gerar o cronograma. NÃO permita a geração de cronograma sem templates similares.`;
+    }
+
+    // Add information about available template types
+    if (availableTemplateTypes.length > 0) {
+      const typesList = availableTemplateTypes
+        .map(
+          (t) =>
+            `- **${t.label}** (${t.count} template${t.count !== 1 ? "s" : ""})`
+        )
+        .join("\n");
+      prompt += `\n\nTIPOS DE TEMPLATES DISPONÍVEIS NO SISTEMA:\n${typesList}\n\nQuando o usuário perguntar sobre quais tipos de templates estão cadastrados ou disponíveis, você DEVE informar esta lista. Use a função list_available_template_types se o usuário perguntar especificamente sobre templates disponíveis.`;
+    } else {
+      prompt += `\n\n⚠️ ATENÇÃO: Nenhum template foi cadastrado ainda no sistema. O usuário precisa cadastrar templates antes de poder gerar cronogramas.`;
     }
 
     return prompt;
@@ -1514,15 +1666,36 @@ Retorne APENAS o JSON, sem explicações.`;
     console.log(
       "[ChatService.generateScheduleFromContext] Step 1: Generating schedule data..."
     );
-    const scheduleData = await scheduleGenerator.generate({
-      projectType: context.projectType || "other",
-      description:
-        (info.projectDescription as string) || context.projectDescription || "",
-      estimatedDuration: info.estimatedDuration as string,
-      startDate: info.startDate as string,
-      milestones: info.milestones as string[],
-      similarTemplateIds: context.similarTemplateIds,
-    });
+    console.log(
+      "[ChatService.generateScheduleFromContext] Similar template IDs:",
+      context.similarTemplateIds?.length || 0
+    );
+
+    let scheduleData;
+    try {
+      scheduleData = await scheduleGenerator.generate({
+        projectType: context.projectType || "other",
+        description:
+          (info.projectDescription as string) ||
+          context.projectDescription ||
+          "",
+        estimatedDuration: info.estimatedDuration as string,
+        startDate: info.startDate as string,
+        milestones: info.milestones as string[],
+        similarTemplateIds: context.similarTemplateIds,
+      });
+    } catch (error) {
+      if (error instanceof NoSimilarTemplatesError) {
+        console.error(
+          "[ChatService.generateScheduleFromContext] ❌ No similar templates found:",
+          error.message
+        );
+        // Re-throw to be handled by the caller
+        throw error;
+      }
+      // Re-throw other errors
+      throw error;
+    }
     console.log(
       "[ChatService.generateScheduleFromContext] ✅ Step 1: Schedule data generated:",
       {
@@ -1845,6 +2018,7 @@ Retorne APENAS o JSON, sem explicações.`;
           id: session.id,
           context: session.context as ChatSessionContext,
           messages: session.messages,
+          organizationId: session.organizationId,
         },
         message.content
       );
@@ -1972,8 +2146,14 @@ Retorne APENAS o JSON, sem explicações.`;
         console.error("=".repeat(80));
 
         // Don't throw - we still want to return the assistant message
-        // Add error message to chat
-        const errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        // Add error message to chat with specific message for NoSimilarTemplatesError
+        let errorMessage: string;
+        if (error instanceof NoSimilarTemplatesError) {
+          errorMessage = `⚠️ ${error.message}\n\nPara resolver isso, você pode:\n1. Cadastrar um template de projeto similar na seção de Templates\n2. Aguardar até que templates similares sejam cadastrados\n3. Tentar novamente após cadastrar templates`;
+        } else {
+          errorMessage = `⚠️ Ocorreu um erro ao gerar o cronograma. Por favor, tente novamente ou use o botão de geração manual.`;
+        }
+
         await db.insert(chatMessages).values({
           id: nanoid(),
           sessionId,

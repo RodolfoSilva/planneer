@@ -38,7 +38,7 @@ export function Chat() {
 
   const [input, setInput] = useState("");
   const [selectedType, setSelectedType] = useState<string | null>(null);
-  const [projectDescription, setProjectDescription] = useState("");
+  const [projectName, setProjectName] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [optimisticMessages, setOptimisticMessages] = useState<
@@ -75,7 +75,7 @@ export function Chat() {
     mutationFn: (data: {
       organizationId: string;
       projectType: string;
-      projectDescription: string;
+      projectName: string;
     }) => chat.startSession(data),
     onSuccess: (data) => {
       // Invalidate projects query to refresh the list
@@ -105,7 +105,7 @@ export function Chat() {
       };
       setOptimisticMessages((prev) => [...prev, optimisticMessage]);
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       setIsTyping(false);
       // Clear optimistic messages as server will return the real ones
       setOptimisticMessages([]);
@@ -288,7 +288,7 @@ export function Chat() {
     console.log("[Chat] handleStartChat called");
     console.log("[Chat] currentOrganization:", currentOrganization);
     console.log("[Chat] selectedType:", selectedType);
-    console.log("[Chat] projectDescription:", projectDescription);
+    console.log("[Chat] projectName:", projectName);
 
     if (!currentOrganization?.id) {
       setError("Organização não encontrada. Recarregue a página.");
@@ -301,15 +301,15 @@ export function Chat() {
       return;
     }
 
-    if (!projectDescription.trim() || projectDescription.trim().length < 10) {
-      setError("Descreva seu projeto (mínimo 10 caracteres)");
+    if (!projectName.trim() || projectName.trim().length < 3) {
+      setError("Digite o nome do projeto (mínimo 3 caracteres)");
       return;
     }
 
     const payload = {
       organizationId: currentOrganization.id,
       projectType: selectedType,
-      projectDescription: projectDescription.trim(),
+      projectName: projectName.trim(),
     };
 
     console.log("[Chat] Sending payload:", payload);
@@ -378,8 +378,8 @@ export function Chat() {
               Criar Novo Cronograma
             </h1>
             <p className="text-lg text-slate-600">
-              Selecione o tipo de projeto e descreva seu projeto. A IA vai
-              ajudá-lo a criar um cronograma completo.
+              Selecione o tipo de projeto e informe o nome. A IA vai coletar os
+              detalhes através de uma conversa.
             </p>
           </div>
 
@@ -437,21 +437,21 @@ export function Chat() {
             </div>
           </div>
 
-          {/* Project Description */}
+          {/* Project Name */}
           <div className="mb-8">
             <label className="block text-sm font-medium text-slate-700 mb-3">
-              2. Descrição do Projeto
+              2. Nome do Projeto
             </label>
-            <textarea
-              value={projectDescription}
-              onChange={(e) => setProjectDescription(e.target.value)}
-              placeholder="Descreva brevemente seu projeto... Ex: Construção de um edifício residencial de 10 andares com 4 apartamentos por andar."
-              className="input min-h-[120px] resize-none"
-              rows={4}
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="Ex: Construção Edifício Residencial Centro"
+              className="input"
             />
             <p className="text-xs text-slate-500 mt-2">
-              Mínimo 10 caracteres. Quanto mais detalhes, melhor será o
-              cronograma gerado.
+              Digite um nome descritivo para o projeto. A descrição detalhada
+              será coletada pela IA durante a conversa.
             </p>
           </div>
 
@@ -548,7 +548,7 @@ export function Chat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Descreva seu projeto ou responda às perguntas..."
+              placeholder="Descreva seu projeto ou responda às perguntas da IA..."
               className="input resize-none pr-12 select-text min-h-[42px]"
               rows={1}
               disabled={

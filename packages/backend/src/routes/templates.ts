@@ -14,6 +14,7 @@ import { parseXER } from "../services/parser/xer-parser";
 import { parseXML } from "../services/parser/xml-parser";
 import { generateEmbedding } from "../services/ai/embeddings";
 import { uploadFile } from "../services/storage";
+import { decodeFileContent } from "../lib/text-encoding";
 
 // Helper to get authenticated user
 async function getAuthUser(request: Request) {
@@ -130,10 +131,10 @@ export const templateRoutes = new Elysia({ prefix: "/api/templates" })
       const fileBuffer = await file.arrayBuffer();
 
       if (fileName.endsWith(".xer")) {
-        const content = new TextDecoder().decode(fileBuffer);
+        const content = decodeFileContent(fileBuffer, fileName);
         parsedData = await parseXER(content);
       } else if (fileName.endsWith(".xml")) {
-        const content = new TextDecoder().decode(fileBuffer);
+        const content = decodeFileContent(fileBuffer, fileName);
         parsedData = await parseXML(content);
       } else {
         throw new Error("Unsupported file format. Please upload .xer or .xml");
@@ -159,6 +160,31 @@ export const templateRoutes = new Elysia({ prefix: "/api/templates" })
         createdAt: now,
         updatedAt: now,
       });
+
+      // Save activities to template_activities table
+      if (parsedData.activities && parsedData.activities.length > 0) {
+        const activitiesToInsert = parsedData.activities.map((activity: any) => ({
+          id: nanoid(),
+          templateId: id,
+          code: activity.code || `ACT${nanoid()}`,
+          name: activity.name || "Unnamed Activity",
+          description: activity.description || null,
+          duration: activity.duration ? String(activity.duration) : null,
+          durationUnit: activity.durationUnit || "days",
+          wbsPath: activity.wbsPath || null,
+          predecessors: activity.predecessors && Array.isArray(activity.predecessors)
+            ? activity.predecessors.join(",")
+            : activity.predecessors || null,
+          resources: activity.resources && Array.isArray(activity.resources)
+            ? activity.resources.join(",")
+            : activity.resources || null,
+          createdAt: now,
+        }));
+
+        if (activitiesToInsert.length > 0) {
+          await db.insert(templateActivities).values(activitiesToInsert);
+        }
+      }
 
       const templateText = JSON.stringify({
         name: body.name || parsedData.projectName,
@@ -326,7 +352,6 @@ export const templateRoutes = new Elysia({ prefix: "/api/templates" })
       // Try to get activities from templateActivities table first
       const dbActivities = await db.query.templateActivities.findMany({
         where: eq(templateActivities.templateId, params.id),
-        orderBy: [templateActivities.code],
       });
 
       // If activities exist in the table, return them
@@ -349,6 +374,93 @@ export const templateRoutes = new Elysia({ prefix: "/api/templates" })
         data: {
           items: activities,
           total: activities.length,
+        },
+      };
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+    }
+  )
+  .post(
+    "/:id/migrate-activities",
+    async ({ params, request }) => {
+      const user = await getAuthUser(request);
+      const template = await db.query.projectTemplates.findFirst({
+        where: eq(projectTemplates.id, params.id),
+      });
+
+      if (!template) {
+        throw new NotFoundError("Template", params.id);
+      }
+
+      const userOrgs = await getUserOrganizations(user.id);
+      const hasAccess = userOrgs.some(
+        (o) => o.organizationId === template.organizationId
+      );
+
+      if (!hasAccess) {
+        throw new ForbiddenError("You do not have access to this template");
+      }
+
+      // Check if activities already exist in table
+      const existingActivities = await db.query.templateActivities.findMany({
+        where: eq(templateActivities.templateId, params.id),
+      });
+
+      if (existingActivities.length > 0) {
+        return {
+          success: true,
+          data: {
+            message: "Activities already migrated",
+            count: existingActivities.length,
+          },
+        };
+      }
+
+      // Get activities from metadata
+      const metadata = template.metadata as any;
+      const metadataActivities = metadata?.activities || [];
+
+      if (metadataActivities.length === 0) {
+        return {
+          success: false,
+          data: {
+            message: "No activities found in template metadata",
+            count: 0,
+          },
+        };
+      }
+
+      // Migrate activities to template_activities table
+      const activitiesToInsert = metadataActivities.map((activity: any) => ({
+        id: nanoid(),
+        templateId: params.id,
+        code: activity.code || `ACT${nanoid()}`,
+        name: activity.name || "Unnamed Activity",
+        description: activity.description || null,
+        duration: activity.duration ? String(activity.duration) : null,
+        durationUnit: activity.durationUnit || "days",
+        wbsPath: activity.wbsPath || null,
+        predecessors: activity.predecessors && Array.isArray(activity.predecessors)
+          ? activity.predecessors.join(",")
+          : activity.predecessors || null,
+        resources: activity.resources && Array.isArray(activity.resources)
+          ? activity.resources.join(",")
+          : activity.resources || null,
+        createdAt: new Date(),
+      }));
+
+      if (activitiesToInsert.length > 0) {
+        await db.insert(templateActivities).values(activitiesToInsert);
+      }
+
+      return {
+        success: true,
+        data: {
+          message: "Activities migrated successfully",
+          count: activitiesToInsert.length,
         },
       };
     },

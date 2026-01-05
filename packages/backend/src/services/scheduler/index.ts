@@ -5,6 +5,7 @@ import { templateActivities, projectTemplates } from '../../db/schema';
 import { LLMService } from '../ai/llm';
 import { RAGService } from '../ai/rag';
 import { addWorkingDays, generateCode } from '@planneer/shared';
+import { NoSimilarTemplatesError } from '../../lib/errors';
 
 const llm = new LLMService();
 const rag = new RAGService();
@@ -53,20 +54,98 @@ export class ScheduleGenerator {
   async generate(options: GenerateOptions): Promise<GeneratedSchedule> {
     const { projectType, description, estimatedDuration, startDate, milestones, similarTemplateIds } = options;
     
+    // VALIDAÇÃO CRÍTICA: Verificar se há templates similares
+    if (!similarTemplateIds || similarTemplateIds.length === 0) {
+      // Tentar buscar templates similares novamente com threshold mínimo
+      const ragResults = await rag.searchSimilarProjects(
+        description || `${projectType}: projeto`,
+        projectType,
+        5,
+        0.5 // threshold mínimo de similaridade
+      );
+      
+      if (ragResults.length === 0) {
+        throw new NoSimilarTemplatesError(
+          `Não foram encontrados templates similares para este projeto (${projectType}). ` +
+          `Por favor, cadastre pelo menos um template de projeto similar antes de gerar o cronograma. ` +
+          `O sistema precisa de templates como referência para gerar atividades realistas.`
+        );
+      }
+      
+      // Usar os templates encontrados
+      const foundTemplateIds = [...new Set(ragResults.map(r => r.templateId))];
+      return this.generateWithTemplates({
+        projectType,
+        description,
+        estimatedDuration,
+        startDate,
+        milestones,
+        similarTemplateIds: foundTemplateIds,
+      });
+    }
+    
+    return this.generateWithTemplates(options);
+  }
+  
+  private async generateWithTemplates(options: GenerateOptions): Promise<GeneratedSchedule> {
+    const { projectType, description, estimatedDuration, startDate, milestones, similarTemplateIds } = options;
+    
     // Get context from similar templates
     let templateContext = '';
     if (similarTemplateIds && similarTemplateIds.length > 0) {
       templateContext = await rag.getTemplateContext(similarTemplateIds);
     }
     
-    // Get best matching template
-    const bestTemplateId = await rag.findBestMatchingTemplate(projectType, description);
+    // Get activities from all similar templates
     let referenceActivities: any[] = [];
+    if (similarTemplateIds && similarTemplateIds.length > 0) {
+      for (const templateId of similarTemplateIds) {
+        // First, try to get activities from template_activities table
+        let activities = await db.query.templateActivities.findMany({
+          where: eq(templateActivities.templateId, templateId),
+        });
+        
+        // If no activities in table, try to get from metadata (fallback for old templates)
+        if (activities.length === 0) {
+          const template = await db.query.projectTemplates.findFirst({
+            where: eq(projectTemplates.id, templateId),
+          });
+          
+          if (template?.metadata) {
+            const metadata = template.metadata as any;
+            const metadataActivities = metadata.activities || [];
+            
+            // Convert metadata activities to the same format as template_activities
+            activities = metadataActivities.map((activity: any) => ({
+              id: nanoid(),
+              templateId: templateId,
+              code: activity.code || `ACT${nanoid()}`,
+              name: activity.name || "Unnamed Activity",
+              description: activity.description || null,
+              duration: activity.duration ? String(activity.duration) : null,
+              durationUnit: activity.durationUnit || "days",
+              wbsPath: activity.wbsPath || null,
+              predecessors: activity.predecessors && Array.isArray(activity.predecessors)
+                ? activity.predecessors.join(",")
+                : activity.predecessors || null,
+              resources: activity.resources && Array.isArray(activity.resources)
+                ? activity.resources.join(",")
+                : activity.resources || null,
+              createdAt: new Date(),
+            }));
+          }
+        }
+        
+        referenceActivities.push(...activities);
+      }
+    }
     
-    if (bestTemplateId) {
-      referenceActivities = await db.query.templateActivities.findMany({
-        where: eq(templateActivities.templateId, bestTemplateId),
-      });
+    // VALIDAÇÃO: Verificar se há atividades de referência
+    if (referenceActivities.length === 0) {
+      throw new NoSimilarTemplatesError(
+        `Os templates similares encontrados não possuem atividades cadastradas. ` +
+        `Por favor, certifique-se de que os templates têm atividades antes de gerar o cronograma.`
+      );
     }
     
     // Use LLM to generate schedule structure
@@ -95,7 +174,24 @@ export class ScheduleGenerator {
   }): Promise<any> {
     const { projectType, description, estimatedDuration, milestones, templateContext, referenceActivities } = params;
     
-    // Build prompt
+    const totalReferenceActivities = referenceActivities.length;
+    
+    // Group activities by WBS path to show structure
+    const activitiesByWBS = new Map<string, any[]>();
+    for (const activity of referenceActivities) {
+      const wbsPath = activity.wbsPath || 'ROOT';
+      if (!activitiesByWBS.has(wbsPath)) {
+        activitiesByWBS.set(wbsPath, []);
+      }
+      activitiesByWBS.get(wbsPath)!.push(activity);
+    }
+    
+    // Show all activities or a large representative sample (up to 500 for very large templates)
+    // This gives the LLM full context without artificial limits
+    const maxActivitiesToShow = Math.min(500, referenceActivities.length);
+    const activitiesToShow = referenceActivities.slice(0, maxActivitiesToShow);
+    
+    // Build prompt focused on using the template as complete reference
     let prompt = `Gere um cronograma de projeto estruturado em JSON para:
 
 TIPO DE PROJETO: ${projectType}
@@ -104,14 +200,36 @@ ${estimatedDuration ? `DURAÇÃO ESTIMADA: ${estimatedDuration}` : ''}
 ${milestones?.length ? `MARCOS IMPORTANTES: ${milestones.join(', ')}` : ''}
 
 ${templateContext ? `REFERÊNCIA DE PROJETOS SIMILARES:\n${templateContext}\n` : ''}
-${referenceActivities.length > 0 ? `ATIVIDADES DE REFERÊNCIA:\n${referenceActivities.slice(0, 20).map(a => `- ${a.code}: ${a.name}`).join('\n')}\n` : ''}
 
-INSTRUÇÕES:
-1. Crie uma estrutura WBS hierárquica apropriada
-2. Liste atividades com durações realistas (em dias)
-3. Defina predecessoras lógicas
-4. Inclua marcos nas datas importantes
-5. Retorne APENAS JSON válido
+INFORMAÇÕES SOBRE OS TEMPLATES DE REFERÊNCIA:
+- Total de atividades disponíveis nos templates: ${totalReferenceActivities}
+- Estruturas WBS identificadas: ${activitiesByWBS.size}
+${totalReferenceActivities > maxActivitiesToShow ? `- Mostrando ${maxActivitiesToShow} atividades abaixo (de ${totalReferenceActivities} totais disponíveis)` : ''}
+
+ATIVIDADES DE REFERÊNCIA DO TEMPLATE:
+${activitiesToShow.map(a => {
+  const wbsInfo = a.wbsPath ? ` [WBS: ${a.wbsPath}]` : '';
+  return `- ${a.code}: ${a.name}${a.duration ? ` (${a.duration} ${a.durationUnit || 'dias'})` : ''}${wbsInfo}`;
+}).join('\n')}
+${referenceActivities.length > maxActivitiesToShow ? `\n... e mais ${referenceActivities.length - maxActivitiesToShow} atividades adicionais nos templates (total: ${totalReferenceActivities} atividades disponíveis como referência)` : ''}
+
+REGRAS IMPORTANTES:
+1. Use o template como referência COMPLETA - ele tem ${totalReferenceActivities} atividades que representam a estrutura e escopo típico deste tipo de projeto
+2. Gere as atividades NECESSÁRIAS baseadas nas especificações do projeto e na estrutura do template
+3. Seja COERENTE com o template: se o template tem muitas atividades detalhadas, seu cronograma deve refletir esse nível de detalhamento
+4. Adapte as atividades do template para o projeto específico, mantendo a estrutura e o nível de detalhe apropriado
+5. Crie uma estrutura WBS hierárquica baseada na estrutura dos templates similares
+6. Use durações realistas baseadas nas atividades de referência do template
+7. Defina predecessoras lógicas baseadas nas dependências dos templates
+8. Inclua marcos nas datas importantes mencionadas
+9. O número de atividades deve ser NATURAL e COERENTE com o template - não force um número específico, mas também não gere apenas um resumo mínimo
+10. Retorne APENAS JSON válido, sem markdown ou explicações
+
+COERÊNCIA COM O TEMPLATE:
+- O template tem ${totalReferenceActivities} atividades que representam a estrutura completa deste tipo de projeto
+- Seu cronograma deve ser coerente com essa estrutura e nível de detalhamento
+- Gere as atividades necessárias para o projeto, usando o template como guia completo
+- Mantenha a proporção e o nível de detalhe do template quando apropriado
 
 FORMATO DO JSON:
 {
@@ -124,7 +242,7 @@ FORMATO DO JSON:
   "activities": [
     {
       "code": "A1000",
-      "name": "Atividade",
+      "name": "Atividade (baseada nas referências)",
       "wbsCode": "1.1",
       "duration": 5,
       "type": "task",
@@ -145,7 +263,15 @@ FORMATO DO JSON:
       const response = await llm.chat([
         { 
           role: 'system', 
-          content: 'Você é um especialista em planejamento de projetos. Gere cronogramas estruturados e realistas. Retorne APENAS JSON válido, sem markdown ou explicações.' 
+          content: `Você é um especialista em planejamento de projetos. Gere cronogramas estruturados, realistas e coerentes com os templates de referência.
+
+PRINCÍPIOS:
+- Use o template como referência completa para entender a estrutura e o nível de detalhe apropriado
+- Gere as atividades NECESSÁRIAS baseadas nas especificações do projeto e na estrutura do template
+- Seja COERENTE com o template - mantenha o nível de detalhamento e a estrutura quando apropriado
+- Não force um número específico de atividades, mas gere um cronograma completo e coerente
+- Adapte o template para o projeto específico, mantendo a coerência estrutural
+- Retorne APENAS JSON válido, sem markdown ou explicações` 
         },
         { role: 'user', content: prompt },
       ]);
@@ -153,7 +279,13 @@ FORMATO DO JSON:
       // Parse JSON from response
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
+        const parsed = JSON.parse(jsonMatch[0]);
+        
+        // Log for debugging (informational only, no warnings about target)
+        const generatedCount = parsed.activities?.length || 0;
+        console.log(`[ScheduleGenerator] Generated schedule: ${generatedCount} activities (reference template has ${totalReferenceActivities} activities)`);
+        
+        return parsed;
       }
       
       throw new Error('No valid JSON found in response');

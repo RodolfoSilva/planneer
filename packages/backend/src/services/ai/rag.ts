@@ -17,7 +17,8 @@ export class RAGService {
   async searchSimilarProjects(
     query: string,
     projectType?: string,
-    limit: number = 5
+    limit: number = 5,
+    minSimilarity: number = 0.5
   ): Promise<RAGResult[]> {
     try {
       // Generate embedding for the query
@@ -52,6 +53,9 @@ export class RAGService {
           return template?.type === projectType;
         });
       }
+      
+      // Filter by minimum similarity threshold
+      filtered = filtered.filter(r => r.similarity >= minSimilarity);
       
       // Return top results with template info
       return filtered.slice(0, limit).map(r => ({
@@ -114,12 +118,14 @@ export class RAGService {
   
   async findBestMatchingTemplate(
     projectType: string,
-    description: string
+    description: string,
+    minSimilarity: number = 0.5
   ): Promise<string | null> {
     const results = await this.searchSimilarProjects(
       `${projectType}: ${description}`,
       projectType,
-      1
+      1,
+      minSimilarity
     );
     
     return results[0]?.templateId || null;

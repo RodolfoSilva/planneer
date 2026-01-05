@@ -9,7 +9,9 @@ import {
   Loader2,
   AlertCircle,
   Building2,
-  Eye
+  Eye,
+  Edit,
+  X
 } from 'lucide-react';
 import { templates } from '@/lib/api';
 import { formatDate, cn } from '@/lib/utils';
@@ -21,6 +23,9 @@ export function Templates() {
   const [search, setSearch] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<{ id: string; name: string } | null>(null);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<any | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   
@@ -32,11 +37,25 @@ export function Templates() {
     queryFn: () => templates.list(),
   });
   
-  const uploadMutation = useMutation({
-    mutationFn: ({ file, organizationId }: { file: File; organizationId: string }) =>
-      templates.upload(file, organizationId),
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { name?: string; description?: string; type?: string } }) =>
+      templates.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['templates'] });
+      setEditingTemplate(null);
+      setError(null);
+    },
+    onError: (err: Error) => {
+      setError(err.message || 'Falha ao atualizar template.');
+    },
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: ({ file, organizationId, metadata }: { file: File; organizationId: string; metadata?: { name?: string; description?: string; type?: string } }) =>
+      templates.upload(file, organizationId, metadata),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['templates'] });
+      setShowUploadModal(false);
       setError(null);
     },
     onError: (err: Error) => {
@@ -69,7 +88,8 @@ export function Templates() {
         return;
       }
       setError(null);
-      uploadMutation.mutate({ file, organizationId: defaultOrgId });
+      setSelectedFile(file);
+      setShowUploadModal(true);
     }
     // Reset input so same file can be selected again
     e.target.value = '';
@@ -100,11 +120,7 @@ export function Templates() {
             disabled={uploadMutation.isPending || isLoading}
             className="btn-primary"
           >
-            {uploadMutation.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            ) : (
-              <Upload className="w-4 h-4 mr-2" />
-            )}
+            <Upload className="w-4 h-4 mr-2" />
             Importar Template
           </button>
         </div>
@@ -175,16 +191,24 @@ export function Templates() {
                   )} />
                 </div>
                 {template.organizationId && (
-                  <button 
-                    className="p-1 hover:bg-slate-100 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={() => {
-                      if (confirm('Tem certeza que deseja excluir este template?')) {
-                        deleteMutation.mutate(template.id);
-                      }
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4 text-slate-400 hover:text-red-500" />
-                  </button>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      className="p-1 hover:bg-slate-100 rounded"
+                      onClick={() => setEditingTemplate(template)}
+                    >
+                      <Edit className="w-4 h-4 text-slate-400 hover:text-blue-500" />
+                    </button>
+                    <button 
+                      className="p-1 hover:bg-slate-100 rounded"
+                      onClick={() => {
+                        if (confirm('Tem certeza que deseja excluir este template?')) {
+                          deleteMutation.mutate(template.id);
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4 text-slate-400 hover:text-red-500" />
+                    </button>
+                  </div>
                 )}
               </div>
               
@@ -219,6 +243,16 @@ export function Templates() {
                 </span>
                 <span>{formatDate(template.createdAt)}</span>
               </div>
+              
+              {template.activityCount && parseInt(template.activityCount) > 0 && (
+                <button
+                  onClick={() => setSelectedTemplate({ id: template.id, name: template.name })}
+                  className="mt-4 w-full btn-secondary text-sm flex items-center justify-center gap-2"
+                >
+                  <Eye className="w-4 h-4" />
+                  Ver Atividades
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -248,6 +282,296 @@ export function Templates() {
           </button>
         </div>
       )}
+      
+      {/* Upload Modal */}
+      {showUploadModal && selectedFile && (
+        <UploadTemplateModal
+          fileName={selectedFile.name}
+          onClose={() => {
+            setShowUploadModal(false);
+            setSelectedFile(null);
+            if (fileInputRef.current) {
+              fileInputRef.current.value = '';
+            }
+          }}
+          onUpload={(metadata) => {
+            if (selectedFile && defaultOrgId) {
+              uploadMutation.mutate({ file: selectedFile, organizationId: defaultOrgId, metadata });
+            }
+          }}
+          isUploading={uploadMutation.isPending}
+        />
+      )}
+
+      {/* Edit Modal */}
+      {editingTemplate && (
+        <EditTemplateModal
+          template={editingTemplate}
+          onClose={() => setEditingTemplate(null)}
+          onSave={(data) => {
+            updateMutation.mutate({ id: editingTemplate.id, data });
+          }}
+          isSaving={updateMutation.isPending}
+        />
+      )}
+
+      {/* Activities Modal */}
+      {selectedTemplate && (
+        <TemplateActivitiesModal
+          templateId={selectedTemplate.id}
+          templateName={selectedTemplate.name}
+          onClose={() => setSelectedTemplate(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Upload Template Modal
+function UploadTemplateModal({
+  fileName,
+  onClose,
+  onUpload,
+  isUploading,
+}: {
+  fileName: string;
+  onClose: () => void;
+  onUpload: (metadata: { name?: string; description?: string; type?: string }) => void;
+  isUploading: boolean;
+}) {
+  const [formData, setFormData] = useState({
+    name: fileName.replace(/\.(xer|xml)$/i, ''),
+    description: '',
+    type: 'other' as string,
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onUpload(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
+        <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+          <h2 className="text-xl font-display font-bold text-slate-900">
+            Importar Template
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+            disabled={isUploading}
+          >
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg">
+            <p className="text-sm text-slate-600 mb-1">Arquivo selecionado:</p>
+            <p className="text-sm font-medium text-slate-900">{fileName}</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Nome *
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              required
+              maxLength={255}
+              className="input"
+              disabled={isUploading}
+              placeholder="Nome do template"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Tipo de Projeto *
+            </label>
+            <select
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+              required
+              className="input"
+              disabled={isUploading}
+            >
+              {Object.entries(PROJECT_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-slate-500">
+              Selecione o tipo de projeto que melhor descreve este template. Isso ajudará na busca e geração de cronogramas similares.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Descrição
+            </label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={3}
+              className="input resize-none"
+              disabled={isUploading}
+              placeholder="Descrição do template (opcional)"
+            />
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn-secondary flex-1"
+              disabled={isUploading}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="btn-primary flex-1"
+              disabled={isUploading || !formData.name.trim()}
+            >
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Importando...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Importar
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Edit Template Modal
+function EditTemplateModal({
+  template,
+  onClose,
+  onSave,
+  isSaving,
+}: {
+  template: any;
+  onClose: () => void;
+  onSave: (data: { name?: string; description?: string; type?: string }) => void;
+  isSaving: boolean;
+}) {
+  const [formData, setFormData] = useState({
+    name: template.name || '',
+    description: template.description || '',
+    type: template.type || 'other',
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
+        <div className="border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+          <h2 className="text-xl font-display font-bold text-slate-900">
+            Editar Template
+          </h2>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+            disabled={isSaving}
+          >
+            <X className="w-5 h-5 text-slate-500" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Nome *
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              required
+              maxLength={255}
+              className="input"
+              disabled={isSaving}
+              placeholder="Nome do template"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Descrição
+            </label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={3}
+              className="input resize-none"
+              disabled={isSaving}
+              placeholder="Descrição do template (opcional)"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Tipo *
+            </label>
+            <select
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+              required
+              className="input"
+              disabled={isSaving}
+            >
+              {Object.entries(PROJECT_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn-secondary flex-1"
+              disabled={isSaving}
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              className="btn-primary flex-1"
+              disabled={isSaving || !formData.name.trim()}
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Salvando...
+                </>
+              ) : (
+                'Salvar Alterações'
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

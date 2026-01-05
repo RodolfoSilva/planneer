@@ -49,7 +49,7 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
         userId: user.id,
         organizationId: body.organizationId,
         projectType: body.projectType,
-        projectDescription: body.projectDescription,
+        projectName: body.projectName,
       });
 
       return { success: true, data: session };
@@ -64,7 +64,7 @@ export const chatRoutes = new Elysia({ prefix: "/api/chat" })
           t.Literal("it"),
           t.Literal("other"),
         ]),
-        projectDescription: t.String({ minLength: 10 }),
+        projectName: t.String({ minLength: 3, maxLength: 255 }),
       }),
     }
   )
