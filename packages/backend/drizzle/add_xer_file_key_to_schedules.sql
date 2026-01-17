@@ -2,3 +2,5 @@
 ALTER TABLE "schedules" ADD COLUMN IF NOT EXISTS "xer_file_key" text;
 
 
+
+

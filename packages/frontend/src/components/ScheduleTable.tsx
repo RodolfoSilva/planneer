@@ -142,3 +142,5 @@ export function ScheduleTable({ activities, onActivityClick }: ScheduleTableProp
 
 
 
+
+

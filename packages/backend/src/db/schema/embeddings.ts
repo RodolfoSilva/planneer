@@ -26,3 +26,5 @@ export const templateEmbeddingsRelations = relations(templateEmbeddings, ({ one 
 
 
 
+
+
